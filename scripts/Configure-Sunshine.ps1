@@ -8,6 +8,7 @@ if ($taskConfig.keepVirtualDisplayInNormalMode -and $taskConfig.virtualDisplayDe
 if (!$taskConfig.keepVirtualDisplayInNormalMode -and (!$taskConfig.sleepOnMoonlightConnect -or !$taskConfig.disconnectMoonlightOnWake)) { throw 'On-demand virtual output requires sleepOnMoonlightConnect=true and disconnectMoonlightOnWake=true.' }
 $taskSunshineConfig = $taskConfig.sunshine.configPath
 $taskText = [IO.File]::ReadAllText($taskSunshineConfig)
+$taskText = Remove-SunshineImeKeybindings $taskText
 $taskExe = Join-Path $env:LOCALAPPDATA 'Programs\PseudoSleep\PseudoSleep.exe'
 if (!(Test-Path -LiteralPath $taskExe)) { throw 'Install PseudoSleep before configuring the client-resolution hook.' }
 $taskPrep = @(Get-OtherSunshinePrep $taskText)

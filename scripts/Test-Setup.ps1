@@ -23,32 +23,41 @@ $taskRejected = $false
 try { Get-SunshinePrep 'global_prep_cmd = {"do":"existing"}' | Out-Null } catch { $taskRejected = $true }
 Assert-Test $taskRejected 'Malformed prep array was accepted.'
 $taskTemporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
-$taskIme = Set-SunshineImeKey "encoder = nvenc`r`n" 'JisIme'
-Assert-Test ($taskIme.Contains('0xC0, 0xF4') -and $taskIme.Contains('encoder = nvenc')) 'Remote IME mapping was not added.'
-Assert-Test ($taskIme -ceq (Set-SunshineImeKey $taskIme 'JisIme')) 'Repeated IME mapping changed the configuration.'
-$taskStandard = Set-SunshineImeKey $taskIme 'Standard'
-Assert-Test ($taskStandard.Contains('0xC0, 0xC0') -and !$taskStandard.Contains('0xF4')) 'Standard keyboard mapping was not restored.'
-$taskCaps = Set-SunshineImeKey $taskIme 'JisIme' 'CapsLock'
-Assert-Test ($taskCaps.Contains('0xC0, 0xF4') -and $taskCaps.Contains('0x14, 0xF4')) 'Caps Lock mapping did not preserve the existing half/full-width mapping.'
-Assert-Test ($taskCaps -ceq (Set-SunshineImeKey $taskCaps 'JisIme' 'CapsLock')) 'Repeated Caps Lock mapping changed the configuration.'
-$taskCapsStandard = Set-SunshineImeKey $taskCaps 'Standard' 'CapsLock'
-Assert-Test ($taskCapsStandard.Contains('0x14, 0x14') -and $taskCapsStandard.Contains('0xC0, 0xF4')) 'Restoring Caps Lock changed the half/full-width mapping.'
-$taskCapsOnly = Set-SunshineImeKey '' 'JisIme' 'CapsLock'
-Assert-Test ($taskCapsOnly.Contains('0x14, 0xF4') -and !$taskCapsOnly.Contains('0xC0')) 'Caps Lock-only setup unexpectedly remapped another key.'
-$taskMultiline = "# user mapping`r`nkeybindings = [`r`n    74, 75, # keep [this] comment`r`n    192, 25`r`n] # keep trailing comment`r`nencoder = nvenc`r`n"
-$taskExpected = $taskMultiline.Replace('192, 25', '192, 0xF4')
-Assert-Test ((Set-SunshineImeKey $taskMultiline 'JisIme') -ceq $taskExpected) 'Existing mappings, comments, or newlines changed.'
-$taskEmpty = Set-SunshineImeKey "keybindings = []`n" 'JisIme'
-Assert-Test ($taskEmpty.Contains('0xC0, 0xF4') -and !$taskEmpty.Contains("`r")) 'Empty keybinding list or LF newline failed.'
-$taskOtherKeys = "keybindings = [`r`n74, 75 # keep this mapping`r`n]`r`n"
-$taskAppended = Set-SunshineImeKey $taskOtherKeys 'JisIme'
-Assert-Test ($taskAppended.Contains("74, 75 # keep this mapping`r`n") -and $taskAppended -ceq (Set-SunshineImeKey $taskAppended 'JisIme')) 'Appending to an existing commented list failed.'
-$taskTrailingComma = Set-SunshineImeKey 'keybindings = [74, 75,]' 'JisIme'
-Assert-Test ($taskTrailingComma -ceq (Set-SunshineImeKey $taskTrailingComma 'JisIme')) 'Trailing comma produced an invalid list.'
-foreach ($taskInvalid in @('keybindings = [192]', 'keybindings = [192, 25, 192, 26]', 'keybindings = [192, garbage]', 'keybindings = [192, 256]', 'keybindings = [192, 25', "keybindings = []`nkeybindings = []", 'keybindings = [] unexpected')) {
+$taskIme = "encoder = nvenc`r`nkeybindings = [0x10, 0xA0, 0xC0, 0xF4, 0x14, 0xF4]`r`nkey_repeat_delay = 500`r`n"
+$taskRepaired = Remove-SunshineImeKeybindings $taskIme
+Assert-Test ($taskRepaired -ceq $taskIme.Replace('0xC0, 0xF4', '0xC0, 0xC0').Replace('0x14, 0xF4', '0x14, 0x14')) 'Both repeatable IME toggles must be removed without changing other settings or normal key repeat.'
+Assert-Test ($taskRepaired -ceq (Remove-SunshineImeKeybindings $taskRepaired)) 'Repeating the repair changed the configuration.'
+foreach ($taskUnchanged in @('', "encoder = nvenc`n", "# keybindings = [0xC0, 0xF4]`n", "keybindings = []`n", 'keybindings = [74, 75,]', 'keybindings = [0xC0, 0x41, 0x14, 0x42, 0x70, 0xF4]', 'keybindings = [0xC0, 0xF3, 0x14, 0xF3]')) {
+    Assert-Test ((Remove-SunshineImeKeybindings $taskUnchanged) -ceq $taskUnchanged) 'Repair added mappings or changed an unrelated/custom mapping.'
+}
+foreach ($taskPair in @(@('0xC0', '0x14'), @('0x14', '0xC0'))) {
+    $taskSingle = 'keybindings = [' + $taskPair[0] + ', 0xF4, ' + $taskPair[1] + ', 0x41]'
+    Assert-Test ((Remove-SunshineImeKeybindings $taskSingle) -ceq $taskSingle.Replace($taskPair[0] + ', 0xF4', $taskPair[0] + ', ' + $taskPair[0])) 'Repair missed one known IME mapping or changed another custom key.'
+}
+$taskMultiline = "# user mapping`r`nkeybindings = [`r`n    74, 75, # keep [this] comment`r`n    192, 244, # half/full`r`n    20, 244 # caps`r`n] # keep trailing comment`r`nencoder = nvenc`r`n"
+$taskExpected = $taskMultiline.Replace('192, 244', '192, 0xC0').Replace('20, 244', '20, 0x14')
+Assert-Test ((Remove-SunshineImeKeybindings $taskMultiline) -ceq $taskExpected) 'Decimal mappings, comments, or CRLF newlines were not preserved.'
+$taskLf = "keybindings = [0x14, 0xf4, # 0xC0, 0xF4 in a comment`n0xc0, 0Xf4,]`n"
+Assert-Test ((Remove-SunshineImeKeybindings $taskLf) -ceq $taskLf.Replace('0x14, 0xf4', '0x14, 0x14').Replace('0xc0, 0Xf4', '0xc0, 0xC0')) 'Mixed-case hex, trailing comma, comment, or LF newline failed.'
+foreach ($taskInvalid in @('keybindings = [192]', 'keybindings = [192, 244, 192, 26]', 'keybindings = [192, garbage]', 'keybindings = [192, 256]', 'keybindings = [192, 244', "keybindings = []`nkeybindings = []", 'keybindings = [] unexpected', 'keybindings = [0xC0, 0xF4, 20, 244, 20, 20]')) {
     $taskRejected = $false
-    try { Set-SunshineImeKey $taskInvalid 'JisIme' | Out-Null } catch { $taskRejected = $true }
+    try { Remove-SunshineImeKeybindings $taskInvalid | Out-Null } catch { $taskRejected = $true }
     Assert-Test $taskRejected ('Malformed or ambiguous keybindings accepted: ' + $taskInvalid)
+}
+$taskRepeatOriginal = "keybindings = [0xC0, 0xC0]`r`nkey_repeat_delay = 650`r`nkey_repeat_frequency = 24.9`r`nencoder = nvenc`r`n"
+$taskRepeatDisabled = Set-SunshineKeyRepeat $taskRepeatOriginal 'Disabled'
+Assert-Test ($taskRepeatDisabled -ceq $taskRepeatOriginal.Replace('key_repeat_delay = 650', 'key_repeat_delay = 0')) 'Disabling remote repeat changed mappings, repeat frequency, or other settings.'
+Assert-Test ($taskRepeatDisabled -ceq (Set-SunshineKeyRepeat $taskRepeatDisabled 'Disabled')) 'Repeated key-repeat disable changed the configuration.'
+Assert-Test ((Set-SunshineKeyRepeat $taskRepeatDisabled 'Enabled' 650) -ceq $taskRepeatOriginal) 'Custom repeat delay could not be restored.'
+Assert-Test ((Set-SunshineKeyRepeat $taskRepeatDisabled 'Enabled') -ceq $taskRepeatOriginal.Replace('650', '500')) 'Default repeat delay is not 500ms.'
+Assert-Test ((Set-SunshineKeyRepeat "encoder = nvenc`n" 'Disabled') -ceq "encoder = nvenc`nkey_repeat_delay = 0`n") 'Missing repeat setting was not added with LF newlines.'
+$taskRejected = $false
+try { Set-SunshineKeyRepeat "key_repeat_delay = 500`nkey_repeat_delay = 600`n" 'Disabled' | Out-Null } catch { $taskRejected = $true }
+Assert-Test $taskRejected 'Duplicate repeat settings were accepted.'
+foreach ($taskInvalidDelay in @(-1, 0, 60001)) {
+    $taskRejected = $false
+    try { Set-SunshineKeyRepeat '' 'Enabled' $taskInvalidDelay | Out-Null } catch { $taskRejected = $true }
+    Assert-Test $taskRejected 'Invalid enabled repeat delay was accepted.'
 }
 $taskTestDirectory = [IO.Path]::GetFullPath((Join-Path $taskTemporaryRoot ('PseudoSleep.SetupTests.' + [Guid]::NewGuid().ToString('N'))))
 if (!$taskTestDirectory.StartsWith($taskTemporaryRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Invalid test directory.' }

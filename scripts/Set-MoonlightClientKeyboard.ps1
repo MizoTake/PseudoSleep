@@ -28,4 +28,4 @@ $taskHasUs = @($taskVerifiedLanguages | Where-Object { $_.LanguageTag -eq 'en-US
 if (!$taskHasUs -or !(Get-WinLanguageBarOption).IsLegacySwitchingMode) { throw ('Input settings could not be verified. Backup: ' + $taskBackup) }
 Write-Output ('Backup: ' + $taskBackup)
 Write-Output 'US input is available; input methods are now selected per app window. Existing Japanese input was preserved.'
-Write-Output 'End the stream. In the Moonlight PC list, use Win+Space to select ENG/US, then reconnect and test Caps Lock. Select Japanese in your other apps.'
+Write-Output 'US input is available via Win+Space before streaming. This optional layout change does not implement Caps Lock IME toggling or fix missing key releases.'

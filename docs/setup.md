@@ -50,6 +50,7 @@ GPUとエンコーダーは機種名で固定しません。新規ドライバ�
 - 通常時に仮想画面を無効にする構成では`output_name`を空にし、配信時の有効画面から選択します。配信開始コマンドが完了した時点では仮想画面だけが有効です。
 - `dd_configuration_option`などのSunshine側画面変更を無効にし、PseudoSleepが復元を管理します。
 - セッション切断の監視に必要なInfoログを有効にします（`min_log_level = 2`）。
+- 旧版が使用したIME切り替えの直接割り当てを解除します。詳細は[IME切り替えの修正](#us配列ホストとjis配列クライアントのime切り替え)を参照してください。
 - UPnPを無効にし、管理UIをホスト自身からのアクセスに制限します。
 - `-AllowServiceRestart`を指定したユーザーへ、Sunshineサービスの状態確認・開始・停止権限だけを追加します。変更前のACLはSunshine設定フォルダへ保存します。
 
@@ -89,49 +90,43 @@ Moonlightを「Native」にし、PseudoSleepの「Moonlightから要求された
 
 ## US配列ホストとJIS配列クライアントのIME切り替え
 
-ホストをUS配列で使い、MoonlightのJISキーボードから「半角／全角」を押すとバッククォートが入力される場合、Sunshineで受信キーをIME切り替えへ割り当てます。通常状態へ戻してから、同じアカウントの管理者PowerShellで実行してください。設定のバックアップを作成し、Sunshineを再起動します。
+以前の`Set-RemoteKeyboard.ps1 -Mode JisIme`による補正は撤回しました。「半角／全角」またはCaps LockをSunshineの`keybindings`で`0xF4`（IME切り替え）へ直接置き換えると、キー解放の通知が届かない場合にIMEが連続して切り替わります。`Set-RemoteKeyboard.ps1`と、この割り当てを有効化する処理は削除しています。
+
+旧版で補正を有効にした場合は、配信を終了してホストを直接操作できる状態に戻し、同じアカウントの管理者PowerShellで次を実行します。EXEを更新するだけではSunshineの既存設定は直りません。
 
 ```powershell
-.\scripts\Set-RemoteKeyboard.ps1 -Mode JisIme
+.\scripts\Reset-RemoteKeyboard.ps1
 ```
 
-Sunshineの`keybindings`で`0xC0`を`0xF4`（`VK_DBE_DBCSCHAR`）へ置き換えます。Windowsのハードウェア配列と物理HHKBの入力は変更しません。他のキー割り当て・画面・音声設定を保持します。対象はSunshineへ接続する全クライアント共通のため、US配列のリモート端末を使う場合も同じ位置のキーがIME切り替えになります。クライアントごとの自動判定は行いません。
+`0xC0 → 0xF4`と`0x14 → 0xF4`に一致する割り当てだけを、元のキー自身への割り当てに戻します。設定を変更する場合はバックアップを作成します。コメント、他のキーへの独自割り当て、画面・音声設定、通常キーのリピート設定は保持します。変更の有無にかかわらずSunshineを再起動し、残っている押しっぱなし状態を解除します。再接続して連続切り替えが止まったことを確認してください。
 
-再接続後、メモ帳などで「半角／全角」を押し、英数字→日本語→英数字と両方向に切り替わることを確認してください。IMEやMoonlightのバージョンによって扱いが異なるため、実際のクライアントで確認します。元のバッククォート入力へ戻す場合は次を実行します。`Standard`はこのキーを`0xC0`自身へ割り当て、他の設定を維持します。以前の独自割り当てまで戻す場合はバックアップの該当箇所を確認してください。
+`Configure-Sunshine.ps1`を再実行する場合も、同じ2つの割り当てを解除してから通常の連携設定を行います。どの割り当てを旧版が書いたかという履歴は保存していないため、手動で設定した同じ2組も解除対象になります。それ以外の独自割り当ては維持します。
+
+### 補正解除後も記号が連続入力される場合
+
+直接置換を解除しても、解放の通知が欠落する問題自体は残ります。その場合はIME切り替えの代わりに、バッククォートなど元のキーが繰り返し入力されます。配信を終了し、同じアカウントの管理者PowerShellで次を実行すると、Sunshineが生成するリピートを暫定的に止められます。
 
 ```powershell
-.\scripts\Set-RemoteKeyboard.ps1 -Mode Standard
+.\scripts\Set-RemoteKeyRepeat.ps1 -Mode Disabled
 ```
 
-Caps LockでもIMEを切り替えたい場合は、次を実行します。「半角／全角」の設定を保持して追加します。この補正は、クライアントからキーの押下・解放が毎回届くことが前提です。
+設定のバックアップを作成し、`key_repeat_delay = 0`にしてSunshineを再起動します。これは**リモートの全キー**に影響し、文字・矢印・Backspaceを長押ししても連続入力されなくなります。物理HHKBのリピート設定は変わりません。届かなかった押下・解放を修復する処理ではないため、キーの再入力が届かない問題やCaps Lock単押しのIME切り替えは解決しません。変更後に再接続して確認します。
+
+クライアント側の押下・解放を修正した後で、通常のリピートを戻す場合は次を実行します。標準の開始遅延は500msです。以前から独自の遅延を使っていた場合は、バックアップの`key_repeat_delay`を`-DelayMilliseconds`に指定してください。解放欠落が残る状態で有効化すると、連続入力が再発します。
 
 ```powershell
-.\scripts\Set-RemoteKeyboard.ps1 -Mode JisIme -Key CapsLock
-# Caps Lockだけを元の動作へ戻す場合
-.\scripts\Set-RemoteKeyboard.ps1 -Mode Standard -Key CapsLock
+.\scripts\Set-RemoteKeyRepeat.ps1 -Mode Enabled -DelayMilliseconds 500
 ```
 
-`-Key`の既定値は`HalfWidthFullWidth`で、指定したキーだけを変更します。Caps Lockを補正中は、リモート側のそのキーをIME切り替えに使います。
+### 原因と現在の制限
 
-### JISのCaps Lock／英数が単押しで反応しない場合
+[対象版Sunshineの入力処理](https://github.com/LizardByte/Sunshine/blob/v2026.914.233613/src/input.cpp)は、解放を受信していないキーの押下を繰り返し生成します。既定値は押下から500ms後に開始し、毎秒24.9回です。IME切り替えキーも同じ処理を通るため、キー置換だけでは連続切り替えを防げません。通常の導入・連携設定ではリピート設定を維持し、上記の専用スクリプトで明示的に変更します。
 
-JISの同じ物理キーでも、Windowsの「英数」と通常のCaps Lockは入力イベントの扱いが異なります。[Mozcの入力処理](https://github.com/google/mozc/blob/master/src/gui/config_dialog/keybinding_editor.cc)にも、英数のキー解放が通常のキーと同じタイミングで通知されない場合への対応があります。Moonlight側で押しっぱなしと認識されると、2回目以降の押下がホストへ届かず、Sunshineのキー置換だけでは補えません。
+JISの「英数」では、通常のCaps Lockと押下・解放通知が異なる場合があります。[Mozcの処理](https://github.com/google/mozc/blob/master/src/gui/config_dialog/keybinding_editor.cc)にもこの扱いへの対応があります。実機診断では単押し3回に対してホストが受信した押下は1回で、解放も欠落していました。ホスト側だけでは、届かなかった次の押下を復元できません。
 
-まず配信を終了し、操作端末のMoonlight接続一覧画面で入力方式を`Win + Space`から「英語（米国）／US」へ切り替え、再接続してCaps Lockの単押しが毎回届くか確認します。配信中のショートカットはホストへ転送される場合があります。ホスト側は日本語IMEを使い続けます。この方法の効果はクライアントでの実機確認が必要です。JIS独自の変換・無変換・かなキーなども確認してください。元の入力方式へ戻す操作も`Win + Space`です。
+現在、JISのCaps Lock／英数単押しによるリモートIME切り替えは未対応です。再実装には、クライアントで物理キーの押下・解放を扱い、1回の押下を1回の切り替えとして送る経路が必要です。押しっぱなし、解放欠落、再接続、フォーカス移動を検証するまでは直接置換を再導入しません。物理HHKBのキーマップやホストのUS配列は変更しません。
 
-Windowsの「アプリ ウィンドウごとに異なる入力方式を設定する」を有効にすると、Moonlightで使う入力方式とほかのアプリで使う入力方式を分けられます。英語／USが一覧にない場合は、操作端末で[Microsoftのキーボード追加手順](https://support.microsoft.com/ja-jp/windows/hardware/input-devices/manage-the-language-and-keyboard-input-layout-settings-in-windows)を使って追加します。ホストのキーボードドライバやハードウェア配列の変更は行いません。
-
-補助スクリプトを使う場合は、`scripts/Set-MoonlightClientKeyboard.ps1`を**Moonlightを使う操作端末**へコピーし、Windows PowerShell 5.1から実行します。ホストでは実行しません。管理者権限や追加ソフトは不要です。
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-MoonlightClientKeyboard.ps1
-```
-
-既存の言語の順序、日本語IME、ほかの入力方式を保持して英語／USを追加し、入力方式をアプリウィンドウごとに選ぶ設定へ変更します。変更前の一覧と入力切り替え設定は`%LOCALAPPDATA%\PseudoSleepClient\KeyboardBackups`へ保存します。スクリプトの完了後、Moonlightの接続一覧画面で`Win + Space`から英語／USを選択して再接続してください。ほかのアプリでは日本語を選びます。
-
-元へ戻す場合は、日本語入力を選び直し、Windowsの言語オプションで今回追加したUS入力を削除します。アプリごとの入力設定はバックアップの`LanguageBar.IsLegacySwitchingMode`を確認して元へ戻してください。以前から存在した英語やほかの配列は削除しません。
-
-この設定は[Sunshineのキー置換機能](https://github.com/LizardByte/Sunshine/blob/v2026.914.233613/docs/configuration.md#keybindings)を利用します。対応版の[入力変換テーブル](https://github.com/LizardByte/libvirtualhid/blob/53e1a949fc0784af716b782ddfa6c647cafd1f05/src/platform/windows/keylayout.hpp)では`0xF3`に別のスキャンコードが割り当てられるため、`0xF4`を使用します。
+以前用意した`Set-MoonlightClientKeyboard.ps1`は、操作端末へUS入力を追加する任意の補助です。IME補正を実装するものではなく、この不具合の修正に実行する必要はありません。既に実行した場合の変更前設定は`%LOCALAPPDATA%\PseudoSleepClient\KeyboardBackups`にあります。戻す場合は日本語入力を選び直し、今回追加したUS入力だけを削除し、アプリごとの入力設定をバックアップの`LanguageBar.IsLegacySwitchingMode`に合わせて戻してください。
 
 ## 任意の常設仮想画面
 
