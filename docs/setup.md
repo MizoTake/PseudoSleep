@@ -87,6 +87,52 @@ Moonlightを「Native」にし、PseudoSleepの「Moonlightから要求された
 
 この補助処理はWindowsの非公開PolicyConfigインターフェースを使用するため、Windowsの変更による影響を受ける可能性があります。Windowsのサウンド設定とSunshine管理画面から有効な仮想出力を手動設定する方法もあります。音声ID・診断ファイルは公開しません。
 
+## US配列ホストとJIS配列クライアントのIME切り替え
+
+ホストをUS配列で使い、MoonlightのJISキーボードから「半角／全角」を押すとバッククォートが入力される場合、Sunshineで受信キーをIME切り替えへ割り当てます。通常状態へ戻してから、同じアカウントの管理者PowerShellで実行してください。設定のバックアップを作成し、Sunshineを再起動します。
+
+```powershell
+.\scripts\Set-RemoteKeyboard.ps1 -Mode JisIme
+```
+
+Sunshineの`keybindings`で`0xC0`を`0xF4`（`VK_DBE_DBCSCHAR`）へ置き換えます。Windowsのハードウェア配列と物理HHKBの入力は変更しません。他のキー割り当て・画面・音声設定を保持します。対象はSunshineへ接続する全クライアント共通のため、US配列のリモート端末を使う場合も同じ位置のキーがIME切り替えになります。クライアントごとの自動判定は行いません。
+
+再接続後、メモ帳などで「半角／全角」を押し、英数字→日本語→英数字と両方向に切り替わることを確認してください。IMEやMoonlightのバージョンによって扱いが異なるため、実際のクライアントで確認します。元のバッククォート入力へ戻す場合は次を実行します。`Standard`はこのキーを`0xC0`自身へ割り当て、他の設定を維持します。以前の独自割り当てまで戻す場合はバックアップの該当箇所を確認してください。
+
+```powershell
+.\scripts\Set-RemoteKeyboard.ps1 -Mode Standard
+```
+
+Caps LockでもIMEを切り替えたい場合は、次を実行します。「半角／全角」の設定を保持して追加します。この補正は、クライアントからキーの押下・解放が毎回届くことが前提です。
+
+```powershell
+.\scripts\Set-RemoteKeyboard.ps1 -Mode JisIme -Key CapsLock
+# Caps Lockだけを元の動作へ戻す場合
+.\scripts\Set-RemoteKeyboard.ps1 -Mode Standard -Key CapsLock
+```
+
+`-Key`の既定値は`HalfWidthFullWidth`で、指定したキーだけを変更します。Caps Lockを補正中は、リモート側のそのキーをIME切り替えに使います。
+
+### JISのCaps Lock／英数が単押しで反応しない場合
+
+JISの同じ物理キーでも、Windowsの「英数」と通常のCaps Lockは入力イベントの扱いが異なります。[Mozcの入力処理](https://github.com/google/mozc/blob/master/src/gui/config_dialog/keybinding_editor.cc)にも、英数のキー解放が通常のキーと同じタイミングで通知されない場合への対応があります。Moonlight側で押しっぱなしと認識されると、2回目以降の押下がホストへ届かず、Sunshineのキー置換だけでは補えません。
+
+まず配信を終了し、操作端末のMoonlight接続一覧画面で入力方式を`Win + Space`から「英語（米国）／US」へ切り替え、再接続してCaps Lockの単押しが毎回届くか確認します。配信中のショートカットはホストへ転送される場合があります。ホスト側は日本語IMEを使い続けます。この方法の効果はクライアントでの実機確認が必要です。JIS独自の変換・無変換・かなキーなども確認してください。元の入力方式へ戻す操作も`Win + Space`です。
+
+Windowsの「アプリ ウィンドウごとに異なる入力方式を設定する」を有効にすると、Moonlightで使う入力方式とほかのアプリで使う入力方式を分けられます。英語／USが一覧にない場合は、操作端末で[Microsoftのキーボード追加手順](https://support.microsoft.com/ja-jp/windows/hardware/input-devices/manage-the-language-and-keyboard-input-layout-settings-in-windows)を使って追加します。ホストのキーボードドライバやハードウェア配列の変更は行いません。
+
+補助スクリプトを使う場合は、`scripts/Set-MoonlightClientKeyboard.ps1`を**Moonlightを使う操作端末**へコピーし、Windows PowerShell 5.1から実行します。ホストでは実行しません。管理者権限や追加ソフトは不要です。
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Set-MoonlightClientKeyboard.ps1
+```
+
+既存の言語の順序、日本語IME、ほかの入力方式を保持して英語／USを追加し、入力方式をアプリウィンドウごとに選ぶ設定へ変更します。変更前の一覧と入力切り替え設定は`%LOCALAPPDATA%\PseudoSleepClient\KeyboardBackups`へ保存します。スクリプトの完了後、Moonlightの接続一覧画面で`Win + Space`から英語／USを選択して再接続してください。ほかのアプリでは日本語を選びます。
+
+元へ戻す場合は、日本語入力を選び直し、Windowsの言語オプションで今回追加したUS入力を削除します。アプリごとの入力設定はバックアップの`LanguageBar.IsLegacySwitchingMode`を確認して元へ戻してください。以前から存在した英語やほかの配列は削除しません。
+
+この設定は[Sunshineのキー置換機能](https://github.com/LizardByte/Sunshine/blob/v2026.914.233613/docs/configuration.md#keybindings)を利用します。対応版の[入力変換テーブル](https://github.com/LizardByte/libvirtualhid/blob/53e1a949fc0784af716b782ddfa6c647cafd1f05/src/platform/windows/keylayout.hpp)では`0xF3`に別のスキャンコードが割り当てられるため、`0xF4`を使用します。
+
 ## 任意の常設仮想画面
 
 通常時にも仮想画面を残したい場合だけ、設定JSONの`keepVirtualDisplayInNormalMode`を`true`にします。仮想画面が有効な状態で`Initialize-Config.ps1`によりSunshineの画面GUIDを取得し、`Configure-Sunshine.ps1`を再実行してください。この場合は固定GUIDを配信先にします。

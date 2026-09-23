@@ -66,3 +66,34 @@ function Wait-AppExit([string]$Executable) {
     }
     throw 'Existing PseudoSleep processes have not exited; setup stopped.'
 }
+
+function Set-SunshineImeKey([string]$Text, [ValidateSet('JisIme','Standard')][string]$Mode, [ValidateSet('HalfWidthFullWidth','CapsLock')][string]$Key = 'HalfWidthFullWidth') {
+    # VK_DBE_DBCSCHAR (0xF4) is the Japanese IME toggle key. Unlike 0xF3, it has no conflicting US scan code in the supported Sunshine version.
+    $taskSourceKey = if ($Key -eq 'CapsLock') { 0x14 } else { 0xC0 }
+    $taskSourceText = '0x{0:X2}' -f $taskSourceKey
+    $taskTarget = if ($Mode -eq 'JisIme') { '0xF4' } else { $taskSourceText }
+    $taskHeaders = [regex]::Matches($Text, '(?m)^[\t ]*keybindings[\t ]*=')
+    if ($taskHeaders.Count -eq 0) { return Set-SunshineSettings $Text ([ordered]@{keybindings=('[0x10, 0xA0, 0x11, 0xA2, 0x12, 0xA4, ' + $taskSourceText + ', ' + $taskTarget + ']')}) }
+    if ($taskHeaders.Count -ne 1) { throw 'Multiple keybindings settings found; correct the configuration first.' }
+    $taskStart = $taskHeaders[0].Index + $taskHeaders[0].Length
+    $taskValue = [regex]::Match($Text.Substring($taskStart), '\A[\t ]*\[(?:[^\x5D#]|#[^\r\n]*)*\][\t ]*(?:#[^\r\n]*)?(?=\r?\n|\z)')
+    if (!$taskValue.Success) { throw 'keybindings must be a complete list of virtual-key pairs.' }
+    $taskMasked = [regex]::Replace($taskValue.Value, '#[^\r\n]*', [Text.RegularExpressions.MatchEvaluator]{ param($taskMatch) ' ' * $taskMatch.Length })
+    $taskNumber = '(?:0[xX][0-9a-fA-F]+|[0-9]+)'
+    if ($taskMasked -notmatch ('\A\s*\[\s*(?:' + $taskNumber + '(?:\s*,\s*' + $taskNumber + ')*\s*,?)?\s*\]\s*\z')) { throw 'keybindings contains an invalid virtual-key value.' }
+    $taskTokens = [regex]::Matches($taskMasked, $taskNumber)
+    if ($taskTokens.Count % 2 -ne 0) { throw 'keybindings must contain pairs of source and destination keys.' }
+    $taskNumbers = @($taskTokens | ForEach-Object { $taskDigits = $_.Value; $taskKey = if ($taskDigits.StartsWith('0x', [StringComparison]::OrdinalIgnoreCase)) { [Convert]::ToInt32($taskDigits.Substring(2), 16) } else { [Convert]::ToInt32($taskDigits, 10) }; if ($taskKey -lt 0 -or $taskKey -gt 255) { throw 'Virtual-key codes must be between 0 and 255.' }; $taskKey })
+    $taskSeen = @{}
+    $taskTargetToken = $null
+    for ($taskIndex = 0; $taskIndex -lt $taskNumbers.Count; $taskIndex += 2) {
+        $taskSource = $taskNumbers[$taskIndex]
+        if ($taskSeen.ContainsKey($taskSource)) { throw 'Duplicate source keys found in keybindings; correct the configuration first.' }
+        $taskSeen[$taskSource] = $true
+        if ($taskSource -eq $taskSourceKey) { $taskTargetToken = $taskTokens[$taskIndex + 1] }
+    }
+    if ($null -ne $taskTargetToken) { return $Text.Remove($taskStart + $taskTargetToken.Index, $taskTargetToken.Length).Insert($taskStart + $taskTargetToken.Index, $taskTarget) }
+    $taskClosing = $taskMasked.LastIndexOf(']')
+    $taskSeparator = if ($taskNumbers.Count -gt 0 -and !$taskMasked.Substring(0, $taskClosing).TrimEnd().EndsWith(',')) { ', ' } else { ' ' }
+    return $Text.Insert($taskStart + $taskClosing, $taskSeparator + $taskSourceText + ', ' + $taskTarget + ' ')
+}
