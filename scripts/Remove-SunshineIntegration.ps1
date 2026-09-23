@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
 Assert-InteractiveUser
 $taskConfig = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+if ($taskConfig.enableRemoteImeBridge) { throw 'Disable the IME bridge with scripts\Set-RemoteImeBridge.ps1 -Mode Disabled before removing the integration, so the reserved keyboard mappings are restored.' }
 $taskSunshineConfig = $taskConfig.sunshine.configPath
 $taskText = [IO.File]::ReadAllText($taskSunshineConfig)
 $taskPrep = @(Get-SunshinePrep $taskText)

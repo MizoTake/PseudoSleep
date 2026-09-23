@@ -83,4 +83,16 @@ try {
     if (!$taskResolved.StartsWith($taskTemporaryRoot, [StringComparison]::OrdinalIgnoreCase) -or [IO.Path]::GetFileName($taskResolved) -notlike 'PseudoSleep.SetupTests.*') { throw 'Refusing unexpected cleanup path.' }
     Remove-Item -LiteralPath $taskResolved -Recurse -Force
 }
+$taskBridgeInput = "# keep`r`nkeybindings = [0x10, 0xA0, 0x14, 0x14, # caps`r`n192, 192] # tail`r`nkey_repeat_delay = 0`r`n"
+$taskBridgeEnabled = Set-SunshineImeBridge $taskBridgeInput 'Enabled'
+Assert-Test ($taskBridgeEnabled.Contains('0x14, 0x7D') -and $taskBridgeEnabled.Contains('192, 0x7E') -and $taskBridgeEnabled.Contains('0x7C, 0x7C')) 'Bridge must route original keys to inert F14/F15 and leave F13 as a relay.'
+Assert-Test ($taskBridgeEnabled.Contains('# caps') -and $taskBridgeEnabled.Contains('# tail') -and $taskBridgeEnabled.Contains('key_repeat_delay = 0') -and $taskBridgeEnabled.Contains('0x10, 0xA0')) 'Bridge changed comments, modifiers, or repeat settings.'
+Assert-Test ((Set-SunshineImeBridge $taskBridgeEnabled 'Enabled') -ceq $taskBridgeEnabled) 'Bridge enable is not idempotent.'
+$taskBridgeDisabled = Set-SunshineImeBridge $taskBridgeEnabled 'Disabled'
+Assert-Test ($taskBridgeDisabled.Contains('0x14, 0x14') -and $taskBridgeDisabled.Contains('192, 0xC0') -and $taskBridgeDisabled.Contains('key_repeat_delay = 0')) 'Bridge disable did not restore original keys or changed repeat settings.'
+Assert-Test ((Set-SunshineImeBridge $taskBridgeDisabled 'Disabled') -ceq $taskBridgeDisabled) 'Bridge disable is not idempotent.'
+foreach ($taskBlank in @('', 'keybindings = []', 'keybindings = [74, 75,]', "keybindings = [74,75 # a comment with ]`n]")) { $taskBridge = Set-SunshineImeBridge $taskBlank 'Enabled'; Assert-Test ($taskBridge.Contains('0x14, 0x7D') -and $taskBridge.Contains('0xC0, 0x7E') -and $taskBridge.Contains('0x7C, 0x7C')) 'Missing bridge mappings were not appended.'; Assert-Test ((Remove-SunshineImeKeybindings $taskBridge) -ceq $taskBridge) 'Appended bridge list is invalid.' }
+foreach ($taskConflict in @('keybindings = [20,65]', 'keybindings = [192,66]', 'keybindings = [124,244]', 'keybindings = [74,124]', 'keybindings = [74,125]', 'keybindings = [125,65]', 'keybindings = [126,65]', 'keybindings = [20,125,20,20]')) { $taskRejected = $false; try { Set-SunshineImeBridge $taskConflict 'Enabled' | Out-Null } catch { $taskRejected = $true }; Assert-Test $taskRejected 'Bridge silently replaced a conflicting custom mapping.' }
+Assert-Test ((Set-SunshineImeBridge 'keybindings = [20,65,192,66]' 'Disabled') -ceq 'keybindings = [20,65,192,66]') 'Bridge disable changed unrelated custom mappings.'
+Assert-Test ((Set-SunshineImeBridge 'keybindings = [20,244,192,244]' 'Enabled').Contains('0x7D')) 'Bridge did not migrate the previous unsafe IME mapping.'
 Write-Output "PASS $taskTestCount setup/syntax checks (no host changes)."

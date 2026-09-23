@@ -90,6 +90,8 @@ Moonlightを「Native」にし、PseudoSleepの「Moonlightから要求された
 
 ## US配列ホストとJIS配列クライアントのIME切り替え
 
+Caps Lock／英数単押しには、新しい[操作端末用IME補助の導入手順](moonlight-ime-client.md)を使用します。クライアントで物理的な押下・解放を扱い、ホストへ1回の信号として送る方式です。以下は旧版の解除と、接続試験までの暫定対処です。
+
 以前の`Set-RemoteKeyboard.ps1 -Mode JisIme`による補正は撤回しました。「半角／全角」またはCaps LockをSunshineの`keybindings`で`0xF4`（IME切り替え）へ直接置き換えると、キー解放の通知が届かない場合にIMEが連続して切り替わります。`Set-RemoteKeyboard.ps1`と、この割り当てを有効化する処理は削除しています。
 
 旧版で補正を有効にした場合は、配信を終了してホストを直接操作できる状態に戻し、同じアカウントの管理者PowerShellで次を実行します。EXEを更新するだけではSunshineの既存設定は直りません。
@@ -124,7 +126,7 @@ Moonlightを「Native」にし、PseudoSleepの「Moonlightから要求された
 
 JISの「英数」では、通常のCaps Lockと押下・解放通知が異なる場合があります。[Mozcの処理](https://github.com/google/mozc/blob/master/src/gui/config_dialog/keybinding_editor.cc)にもこの扱いへの対応があります。実機診断では単押し3回に対してホストが受信した押下は1回で、解放も欠落していました。ホスト側だけでは、届かなかった次の押下を復元できません。
 
-現在、JISのCaps Lock／英数単押しによるリモートIME切り替えは未対応です。再実装には、クライアントで物理キーの押下・解放を扱い、1回の押下を1回の切り替えとして送る経路が必要です。押しっぱなし、解放欠落、再接続、フォーカス移動を検証するまでは直接置換を再導入しません。物理HHKBのキーマップやホストのUS配列は変更しません。
+新しいIME補助はクライアントのRaw Inputを使用し、1回の押下・解放を1回の信号へ変換します。押しっぱなし、解放欠落、再接続、フォーカス移動の状態テストは成功しました。Moonlight越しの実機受け入れは未完了です。IMEキーへの直接置換は再導入せず、物理HHKBのキーマップやホストのUS配列も変更しません。
 
 以前用意した`Set-MoonlightClientKeyboard.ps1`は、操作端末へUS入力を追加する任意の補助です。IME補正を実装するものではなく、この不具合の修正に実行する必要はありません。既に実行した場合の変更前設定は`%LOCALAPPDATA%\PseudoSleepClient\KeyboardBackups`にあります。戻す場合は日本語入力を選び直し、今回追加したUS入力だけを削除し、アプリごとの入力設定をバックアップの`LanguageBar.IsLegacySwitchingMode`に合わせて戻してください。
 
@@ -143,6 +145,8 @@ JISの「英数」では、通常のCaps Lockと押下・解放通知が異な�
 または`Ctrl + Alt + Shift + F12`で復帰します。復元失敗時は`state.json`とバックアップを保全します。保存対象モニターを外している場合は再接続してください。OSやGPUが停止している場合や、両プロセスを終了した場合は即時の自動復旧ができません。
 
 PseudoSleepを停止して通常のSunshine運用へ戻す場合は、先に配信を終了し、管理者PowerShellで開始フックを解除します。
+
+新しいIME補助を有効化している場合は、先に `scripts/Set-RemoteImeBridge.ps1 -Mode Disabled` を実行してキー割り当てを戻してください。補助が有効なままでは連携解除・アンインストールを停止します。
 
 ```powershell
 .\scripts\Remove-SunshineIntegration.ps1

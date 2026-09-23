@@ -103,3 +103,38 @@ function Set-SunshineKeyRepeat([string]$Text, [ValidateSet('Disabled','Enabled')
     $taskDelay = if ($Mode -eq 'Disabled') { 0 } else { $DelayMilliseconds }
     return Set-SunshineSettings $Text ([ordered]@{ key_repeat_delay=$taskDelay })
 }
+
+function Set-SunshineImeBridge([string]$Text, [ValidateSet('Enabled','Disabled')][string]$Mode) {
+    # Validate the entire list and remove the previous unsafe direct-to-IME mappings first.
+    $Text = Remove-SunshineImeKeybindings $Text
+    $taskHeader = [regex]::Match($Text, '(?m)^[\t ]*keybindings[\t ]*=')
+    if (!$taskHeader.Success) {
+        if ($Mode -eq 'Disabled') { return $Text }
+        return Set-SunshineSettings $Text ([ordered]@{ keybindings='[0x10, 0xA0, 0x11, 0xA2, 0x12, 0xA4, 0x14, 0x7D, 0xC0, 0x7E, 0x7C, 0x7C]' })
+    }
+    $taskStart = $taskHeader.Index + $taskHeader.Length
+    $taskValue = [regex]::Match($Text.Substring($taskStart), '\A[\t ]*\[(?:[^\x5D#]|#[^\r\n]*)*\]')
+    $taskMasked = [regex]::Replace($taskValue.Value, '#[^\r\n]*', [Text.RegularExpressions.MatchEvaluator]{ param($taskMatch) ' ' * $taskMatch.Length })
+    $taskTokens = [regex]::Matches($taskMasked, '(?:0[xX][0-9a-fA-F]+|[0-9]+)')
+    $taskMappings = @{ 0x14=0x7D; 0xC0=0x7E; 0x7C=0x7C }
+    $taskSeen = @{}
+    $taskChanges = [Collections.Generic.List[object]]::new()
+    for ($taskIndex = 0; $taskIndex -lt $taskTokens.Count; $taskIndex += 2) {
+        $taskSource = [int]$taskTokens[$taskIndex].Value
+        $taskTarget = [int]$taskTokens[$taskIndex + 1].Value
+        $taskSeen[$taskSource] = $true
+        if ($Mode -eq 'Enabled') {
+            if (($taskMappings.ContainsKey($taskSource) -and $taskTarget -ne $taskSource -and $taskTarget -ne $taskMappings[$taskSource]) -or ($taskSource -in @(0x7D,0x7E) -and $taskTarget -ne $taskSource) -or ($taskTarget -in @(0x7C,0x7D,0x7E) -and $taskSource -ne $taskTarget -and (!$taskMappings.ContainsKey($taskSource) -or $taskTarget -ne $taskMappings[$taskSource]))) { throw 'An existing custom mapping conflicts with IME bridge keys (Caps, half/full, F13-F15). Preserve it and resolve the conflict first.' }
+            if ($taskMappings.ContainsKey($taskSource) -and $taskTarget -ne $taskMappings[$taskSource]) { $taskChanges.Add([pscustomobject]@{ Token=$taskTokens[$taskIndex + 1]; Value=('0x{0:X2}' -f $taskMappings[$taskSource]) }) }
+        } elseif ($taskMappings.ContainsKey($taskSource) -and $taskTarget -eq $taskMappings[$taskSource] -and $taskTarget -ne $taskSource) { $taskChanges.Add([pscustomobject]@{ Token=$taskTokens[$taskIndex + 1]; Value=('0x{0:X2}' -f $taskSource) }) }
+    }
+    $taskMissing = @()
+    if ($Mode -eq 'Enabled') { foreach ($taskSource in @(0x14,0xC0,0x7C)) { if (!$taskSeen.ContainsKey($taskSource)) { $taskMissing += ('0x{0:X2}, 0x{1:X2}' -f $taskSource, $taskMappings[$taskSource]) } } }
+    if ($taskMissing.Count -gt 0) {
+        $taskClose = $taskMasked.LastIndexOf(']')
+        $taskPrefix = if ($taskTokens.Count -gt 0 -and $taskMasked.Substring(0, $taskClose).TrimEnd()[-1] -ne ',') { ', ' } else { ' ' }
+        $Text = $Text.Insert($taskStart + $taskClose, $taskPrefix + ($taskMissing -join ', ') + ' ')
+    }
+    for ($taskIndex = $taskChanges.Count - 1; $taskIndex -ge 0; $taskIndex--) { $taskChange = $taskChanges[$taskIndex]; $Text = $Text.Remove($taskStart + $taskChange.Token.Index, $taskChange.Token.Length).Insert($taskStart + $taskChange.Token.Index, $taskChange.Value) }
+    return $Text
+}

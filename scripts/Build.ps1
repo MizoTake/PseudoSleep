@@ -6,10 +6,11 @@ try {
     & (Join-Path $PSScriptRoot 'Test-Setup.ps1')
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Test-ClientKeyboardSetup.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Client keyboard setup tests failed' }
-    dotnet build src/PseudoSleep -c Release
+    dotnet build PseudoSleep.sln -c Release
     if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
     dotnet run --project tests/PseudoSleep.Tests -c Release
     if ($LASTEXITCODE -ne 0) { throw 'Tests failed' }
+    & (Join-Path $PSScriptRoot 'Build-MoonlightImeClient.ps1')
     if ($Publish) {
         dotnet publish src/PseudoSleep -c Release -r win-x64 --self-contained false -o artifacts/publish
         if ($LASTEXITCODE -ne 0) { throw 'Publish failed' }

@@ -9,6 +9,7 @@ if (!$taskConfig.keepVirtualDisplayInNormalMode -and (!$taskConfig.sleepOnMoonli
 $taskSunshineConfig = $taskConfig.sunshine.configPath
 $taskText = [IO.File]::ReadAllText($taskSunshineConfig)
 $taskText = Remove-SunshineImeKeybindings $taskText
+if ($taskConfig.enableRemoteImeBridge) { $taskText = Set-SunshineImeBridge $taskText 'Enabled' }
 $taskExe = Join-Path $env:LOCALAPPDATA 'Programs\PseudoSleep\PseudoSleep.exe'
 if (!(Test-Path -LiteralPath $taskExe)) { throw 'Install PseudoSleep before configuring the client-resolution hook.' }
 $taskPrep = @(Get-OtherSunshinePrep $taskText)

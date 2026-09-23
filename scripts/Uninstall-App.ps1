@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $taskConfigPath = Join-Path $env:APPDATA 'PseudoSleep\config.json'
 if (Test-Path -LiteralPath $taskConfigPath) {
     $taskConfig = Get-Content -LiteralPath $taskConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($taskConfig.enableRemoteImeBridge) { throw 'Disable the IME bridge with scripts\Set-RemoteImeBridge.ps1 -Mode Disabled before uninstalling.' }
     if (Test-Path -LiteralPath $taskConfig.sunshine.configPath) {
         $taskPrep = @(Get-SunshinePrep ([IO.File]::ReadAllText($taskConfig.sunshine.configPath)))
         if (@($taskPrep | Where-Object { Test-PseudoSleepPrep $_ }).Count -gt 0) { throw 'Sunshine still calls PseudoSleep. First run scripts\Remove-SunshineIntegration.ps1 in an administrator PowerShell under the same signed-in account, then run this script again. No changes were made.' }

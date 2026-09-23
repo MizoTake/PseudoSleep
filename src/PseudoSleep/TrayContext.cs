@@ -8,6 +8,7 @@ internal sealed class TrayContext : ApplicationContext
     private readonly Form dispatcher = new() { ShowInTaskbar = false };
     private readonly NotifyIcon tray;
     private readonly InputWindow input;
+    private readonly RemoteImeBridge imeBridge;
     private readonly PowerLease power = new();
     private readonly Guardian guardian = new();
     private readonly SleepController controller;
@@ -26,6 +27,7 @@ internal sealed class TrayContext : ApplicationContext
         config = RuntimeConfiguration.Load();
         _ = dispatcher.Handle;
         input = new InputWindow();
+        imeBridge = new RemoteImeBridge(dispatcher);
         controller = new(new DisplayManager(), new RecoveryJournal(), power, guardian, new SunshineHost(), () => Environment.TickCount64, Storage.Log);
         var menu = new ContextMenuStrip();
         menu.Items.Add("🌙 疑似スリープ", null, (_, _) => Execute(new("sleep")));
@@ -38,7 +40,7 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add("終了（画面を復元）", null, (_, _) => Execute(new("exit")));
         tray = new NotifyIcon { Icon = normalIcon, Text = "PseudoSleep — Normal", ContextMenuStrip = menu, Visible = true };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Execute(new("toggle")); };
-        controller.Changed += UpdateIcon;
+        controller.Changed += () => { if (controller.State != AppState.PseudoSleep) imeBridge.SetActive(false); UpdateIcon(); };
         input.Input += path =>
         {
             settings?.ObserveInput(path);
@@ -74,6 +76,7 @@ internal sealed class TrayContext : ApplicationContext
                     if (command.TestSeconds > 0) { restoreTimer.Interval = command.TestSeconds * 1000; restoreTimer.Start(); }
                     break;
                 case "wake":
+                    imeBridge.SetActive(false);
                     restoreTimer.Stop();
                     sessionMonitor.Reset();
                     controller.Wake(config);
@@ -82,36 +85,42 @@ internal sealed class TrayContext : ApplicationContext
                     break;
                 case "status": return new(true, Status());
                 case "client-mode": case "stream-start":
+                    if (command.Name == "stream-start") imeBridge.SetActive(false);
                     config = RuntimeConfiguration.Load();
-                    if (command.Name == "stream-start" && !config.KeepVirtualDisplayInNormalMode) sessionMonitor.Arm(Path.Combine(Path.GetDirectoryName(config.Sunshine.ConfigPath)!, "sunshine.log"), Environment.TickCount64);
+                    if (command.Name == "stream-start" && config.EnableRemoteImeBridge) RemoteImeConfiguration.Verify(File.ReadAllText(config.Sunshine.ConfigPath));
+                    if (command.Name == "stream-start" && (!config.KeepVirtualDisplayInNormalMode || config.EnableRemoteImeBridge)) sessionMonitor.Arm(Path.Combine(Path.GetDirectoryName(config.Sunshine.ConfigPath)!, "sunshine.log"), Environment.TickCount64);
                     if (command.Name == "stream-start" ? controller.StartStream(command.Width, command.Height, config) : controller.SetClientResolution(command.Width, command.Height, config))
                     {
                         CommandCompletion.RememberClientResolution(config, command.Width, command.Height, value => Storage.Write(Storage.ConfigPath, value), ReportWarning);
                     }
+                    if (command.Name == "stream-start") imeBridge.SetActive(config.EnableRemoteImeBridge);
                     break;
-                case "stream-stop": sessionMonitor.Reset(); restoreTimer.Stop(); controller.Wake(); PrepareNormalDisplay(); break;
+                case "stream-stop": imeBridge.SetActive(false); sessionMonitor.Reset(); restoreTimer.Stop(); controller.Wake(); PrepareNormalDisplay(); break;
                 case "apply-settings": config = RuntimeConfiguration.Load(); PrepareNormalDisplay(); break;
                 case "settings": ShowSettings(); break;
-                case "exit": sessionMonitor.Reset(); controller.Wake(config); PrepareNormalDisplay(); dispatcher.BeginInvoke(ExitThread); break;
+                case "exit": imeBridge.SetActive(false); sessionMonitor.Reset(); controller.Wake(config); PrepareNormalDisplay(); dispatcher.BeginInvoke(ExitThread); break;
                 default: return new(false, null, "Unknown command.");
             }
             return new(true, CommandCompletion.ReadStatus(Status, ReportWarning));
         }
-        catch (Exception ex) { Storage.Log($"Command {command.Name}: {ex}"); NotifyError(ex.Message); return new(false, null, ex.Message); }
+        catch (Exception ex) { if (command.Name == "stream-start") imeBridge.SetActive(false); Storage.Log($"Command {command.Name}: {ex}"); NotifyError(ex.Message); return new(false, null, ex.Message); }
     }
 
     private object Status()
     {
         var displays = DisplayManager.Enumerate();
-        return new { state = controller.State.ToString(), resident = true, physicalDisplays = displays.Count(d => d.Active && !d.Indirect), virtualDisplay = displays.Any(d => d.Active && string.Equals(d.DevicePath, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase)), keepVirtualDisplayInNormalMode = config.KeepVirtualDisplayInNormalMode, powerRequest = power.Active, sunshine = SunshineHost.IsRunning(config.Sunshine.ServiceName), localWakeMonitor = true, wakeDeviceCount = config.WakeDevices.Count, hotkeyRegistered = input.HotkeyRegistered, recoveryPending = File.Exists(Storage.StatePath), configPath = Storage.ConfigPath, executable = Environment.ProcessPath, streamMonitored = sessionMonitor.Armed, lastError = controller.LastError };
+        return new { state = controller.State.ToString(), resident = true, physicalDisplays = displays.Count(d => d.Active && !d.Indirect), virtualDisplay = displays.Any(d => d.Active && string.Equals(d.DevicePath, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase)), keepVirtualDisplayInNormalMode = config.KeepVirtualDisplayInNormalMode, powerRequest = power.Active, sunshine = SunshineHost.IsRunning(config.Sunshine.ServiceName), localWakeMonitor = true, wakeDeviceCount = config.WakeDevices.Count, hotkeyRegistered = input.HotkeyRegistered, remoteImeBridgeEnabled = config.EnableRemoteImeBridge, remoteImeBridgeActive = imeBridge.Active, remoteImeToggleCount = imeBridge.ToggleCount, recoveryPending = File.Exists(Storage.StatePath), configPath = Storage.ConfigPath, executable = Environment.ProcessPath, streamMonitored = sessionMonitor.Armed, lastError = controller.LastError };
     }
 
     private void CheckStreamingSession()
     {
         if (!sessionMonitor.Armed) return;
-        if (controller.State != AppState.PseudoSleep) { sessionMonitor.Reset(); return; }
+        if (controller.State != AppState.PseudoSleep && !config.KeepVirtualDisplayInNormalMode) { imeBridge.SetActive(false); sessionMonitor.Reset(); return; }
         try { if (SunshineHost.IsRunning(config.Sunshine.ServiceName) && !sessionMonitor.Poll(Environment.TickCount64)) return; }
         catch (Exception ex) { Storage.Log($"Cannot track Sunshine session; restoring local displays: {ex.Message}"); }
+        imeBridge.SetActive(false);
+        sessionMonitor.Reset();
+        if (controller.State == AppState.Normal && config.KeepVirtualDisplayInNormalMode) return;
         Storage.Log("Moonlight session ended or failed to connect; restoring physical displays.");
         Execute(new("wake"));
     }
@@ -139,6 +148,7 @@ internal sealed class TrayContext : ApplicationContext
             disposed = true;
             Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
             stop.Cancel();
+            ((IDisposable)imeBridge).Dispose();
             try { controller.Wake(config); } catch (Exception ex) { Storage.Log($"Exit restore: {ex}"); }
             tray.Visible = false;
             tray.Dispose();

@@ -18,6 +18,7 @@ public sealed class AppConfig
     public bool KeepVirtualDisplayInNormalMode { get; set; }
     public bool SleepOnMoonlightConnect { get; set; } = true;
     public bool DisconnectMoonlightOnWake { get; set; } = true;
+    public bool EnableRemoteImeBridge { get; set; }
     public int LastClientWidth { get; set; }
     public int LastClientHeight { get; set; }
     public SunshineConfig Sunshine { get; set; } = new();
