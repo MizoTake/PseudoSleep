@@ -44,7 +44,7 @@ var tests = new (string Name, Action Run)[]
     ("Automatic client resolution can be disabled", () => { var f = new Fixture(); var c = Config(); c.FollowClientResolution = false; f.Controller.Enter(c); Assert(!f.Controller.SetClientResolution(1920, 1080, c)); Assert(!f.Calls.Contains("client-mode")); }),
     ("Remembered client resolution is used on next sleep", () => { var f = new Fixture(); var c = Config(); c.LastClientWidth = 1920; c.LastClientHeight = 1200; f.Controller.Enter(c); Assert(f.Width == 1920 && f.Height == 1200); Assert(c.Width == 2560); }),
 };
-tests = tests.Concat(AppBoundaryTests.Cases).Concat(SessionTests.Cases).Concat(KeyboardBridgeTests.Cases).ToArray();
+tests = tests.Concat(AppBoundaryTests.Cases).Concat(SessionTests.Cases).Concat(KeyboardBridgeTests.Cases).Concat(ClientLayoutTests.Cases).ToArray();
 var failures = 0;
 foreach (var test in tests) { try { test.Run(); Console.WriteLine($"PASS {test.Name}"); } catch (Exception ex) { failures++; Console.WriteLine($"FAIL {test.Name}: {ex.Message}"); } }
 Console.WriteLine($"{tests.Length - failures}/{tests.Length} passed");

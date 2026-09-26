@@ -17,6 +17,7 @@ namespace PseudoSleep.MoonlightImeClient
         public bool Enabled = true;
         public bool Caps = true;
         public bool HalfFull = true;
+        public bool AutomaticUsInput = true;
         public string ProcessName = "Moonlight";
         public string WindowClass = "SDL_app";
     }
@@ -52,6 +53,7 @@ namespace PseudoSleep.MoonlightImeClient
         private readonly CheckBox enabled = new CheckBox { AutoSize = true, Text = "Moonlightの配信画面で補助を有効にする" };
         private readonly CheckBox caps = new CheckBox { AutoSize = true, Text = "Caps Lock／英数の単押しで切り替える" };
         private readonly CheckBox half = new CheckBox { AutoSize = true, Text = "半角／全角の単押しで切り替える" };
+        private readonly CheckBox usInput = new CheckBox { AutoSize = true, Text = "キー解放を取得できる入力配列をMoonlightに自動選択する" };
         private bool closing;
         private bool disposed;
 
@@ -59,18 +61,18 @@ namespace PseudoSleep.MoonlightImeClient
         {
             settings = File.Exists(SettingsPath) ? ReadSettings() : new ClientSettings();
             if (string.IsNullOrWhiteSpace(settings.ProcessName) || string.IsNullOrWhiteSpace(settings.WindowClass)) throw new InvalidDataException("Moonlightの検出設定が空です: " + SettingsPath);
-            Text = "Moonlight IME補助";
+            Text = "Moonlight IME補助 v2";
             Font = new Font("Yu Gothic UI", 10);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(610, 405);
-            MinimumSize = new Size(630, 440);
+            ClientSize = new Size(650, 555);
+            MinimumSize = new Size(670, 590);
             var layout = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true, Padding = new Padding(20) };
             Controls.Add(layout);
-            layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(560, 0), Text = "このアプリはMoonlightを使う操作端末で起動してください。\nキーを押して離すたびに、メインPCの日本語入力を1回切り替えます。\n長押しやShift等との同時押しでは切り替えません。", Margin = new Padding(0, 0, 0, 15) });
-            enabled.Checked = settings.Enabled; caps.Checked = settings.Caps; half.Checked = settings.HalfFull;
-            layout.Controls.Add(enabled); layout.Controls.Add(caps); layout.Controls.Add(half);
+            layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(600, 0), Text = "このアプリはMoonlightを使う操作端末で起動してください。\nキーを押して離すたびに、メインPCの日本語入力を1回切り替えます。\n長押し中は繰り返さず、Shift等との同時押しは対象外です。", Margin = new Padding(0, 0, 0, 15) });
+            enabled.Checked = settings.Enabled; caps.Checked = settings.Caps; half.Checked = settings.HalfFull; usInput.Checked = settings.AutomaticUsInput;
+            layout.Controls.Add(enabled); layout.Controls.Add(caps); layout.Controls.Add(half); layout.Controls.Add(usInput);
             input = new RawKeyboard(settings);
-            foreach (var checkbox in new[] { enabled, caps, half }) checkbox.CheckedChanged += delegate { settings.Enabled = enabled.Checked; settings.Caps = caps.Checked; settings.HalfFull = half.Checked; input.Cancel(); try { SaveSettings(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "設定を保存できません"); } };
+            foreach (var checkbox in new[] { enabled, caps, half, usInput }) checkbox.CheckedChanged += delegate { settings.Enabled = enabled.Checked; settings.Caps = caps.Checked; settings.HalfFull = half.Checked; settings.AutomaticUsInput = usInput.Checked; input.SettingsChanged(); try { SaveSettings(); } catch (Exception ex) { MessageBox.Show(this, ex.Message, "設定を保存できません"); } };
             status.Margin = new Padding(0, 15, 0, 15);
             layout.Controls.Add(status);
             var buttons = new FlowLayoutPanel { AutoSize = true };
@@ -79,7 +81,7 @@ namespace PseudoSleep.MoonlightImeClient
             var hide = new Button { Text = "通知領域にしまう", AutoSize = true }; hide.Click += delegate { Hide(); };
             var exit = new Button { Text = "終了", AutoSize = true }; exit.Click += delegate { closing = true; Close(); };
             buttons.Controls.Add(copy); buttons.Controls.Add(hide); buttons.Controls.Add(exit); layout.Controls.Add(buttons);
-            layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(560, 0), Text = "初回はメインPC側のIME補助設定も必要です。\n診断情報には対象2キーの回数だけを含み、入力した文章は記録しません。", Margin = new Padding(0, 12, 0, 0) });
+            layout.Controls.Add(new Label { AutoSize = true, MaximumSize = new Size(600, 0), Text = "初回は同梱の Start-MoonlightImeClient.cmd から起動してください。\nUS入力とアプリごとの入力設定を準備し、ローカルの日本語入力を残します。\n診断情報は対象キーの状態と配列のみで、入力した文章は記録しません。", Margin = new Padding(0, 12, 0, 0) });
             var menu = new ContextMenuStrip();
             menu.Items.Add("設定・診断", null, delegate { Show(); WindowState = FormWindowState.Normal; Activate(); });
             menu.Items.Add("終了", null, delegate { closing = true; Close(); });
@@ -128,11 +130,17 @@ namespace PseudoSleep.MoonlightImeClient
         [DllImport("user32.dll")] private static extern bool UnhookWinEvent(IntPtr hook);
         private readonly ClientSettings settings;
         private readonly ClientKeyGate gate = new ClientKeyGate();
+        private readonly ClientLayoutGuard inputLayout = new ClientLayoutGuard(new ClientKeyboardLayout());
+        private readonly Stopwatch clock = Stopwatch.StartNew();
         private readonly WinEventProc focusCallback;
         private readonly IntPtr focusHook;
         private IntPtr foreground;
         private long context;
         private bool target;
+        private bool layoutReady;
+        private string lastMoonlightClass = "未検出";
+        private string lastTargetLayout = "未検出";
+        private string lastKey = "未検出";
         private readonly int[] down = new int[2];
         private readonly int[] up = new int[2];
         private int sent;
@@ -151,22 +159,44 @@ namespace PseudoSleep.MoonlightImeClient
         }
 
         internal void Cancel() { gate.Cancel(); context++; }
+        internal void SettingsChanged() { Cancel(); inputLayout.Reset(); CheckFocus(); }
         internal void CheckFocus()
         {
             var current = KeyboardNative.GetForegroundWindow();
-            if (current == foreground) return;
-            foreground = current; Cancel(); target = false;
-            if (foreground == IntPtr.Zero) return;
-            var name = new StringBuilder(256);
-            GetClassName(foreground, name, name.Capacity);
-            if (!string.Equals(name.ToString(), settings.WindowClass, StringComparison.Ordinal)) return;
-            uint pid; GetWindowThreadProcessId(foreground, out pid);
-            try { using (var process = Process.GetProcessById((int)pid)) target = string.Equals(process.ProcessName, settings.ProcessName, StringComparison.OrdinalIgnoreCase); }
-            catch (ArgumentException) { } catch (InvalidOperationException) { } catch (Win32Exception) { }
+            if (current != foreground)
+            {
+                foreground = current; Cancel(); target = false;
+                if (foreground != IntPtr.Zero)
+                {
+                    var name = new StringBuilder(256);
+                    GetClassName(foreground, name, name.Capacity);
+                    uint pid; GetWindowThreadProcessId(foreground, out pid);
+                    try { using (var process = Process.GetProcessById((int)pid)) if (string.Equals(process.ProcessName, settings.ProcessName, StringComparison.OrdinalIgnoreCase)) { lastMoonlightClass = name.ToString(); target = string.Equals(lastMoonlightClass, settings.WindowClass, StringComparison.Ordinal); } }
+                    catch (ArgumentException) { } catch (InvalidOperationException) { } catch (Win32Exception) { }
+                }
+            }
+            var previousLayout = inputLayout.CurrentLayout;
+            var ready = inputLayout.Update(target ? foreground.ToInt64() : 0, settings.Enabled && (settings.Caps || settings.HalfFull), settings.AutomaticUsInput, clock.ElapsedMilliseconds);
+            if (ready != layoutReady || previousLayout != inputLayout.CurrentLayout) Cancel();
+            layoutReady = ready;
+            if (target) lastTargetLayout = inputLayout.CurrentLayout.ToString("X") + " / " + inputLayout.State;
         }
 
-        internal string Status() { return (error.Length > 0 ? "送信エラー: " + error : !settings.Enabled ? "補助は停止中です。" : target ? "Moonlightの配信画面を検出しました。" : "Moonlightの配信画面が前面になるのを待っています。") + "\n英数: 押下 " + down[0] + " ／ 解放 " + up[0] + "\n半角全角: 押下 " + down[1] + " ／ 解放 " + up[1] + "\n送信した切り替え: " + sent + " 回"; }
-        internal string Diagnostic() { return "Moonlight IME bridge v1\r\n" + Status() + "\r\nFailures: " + failures + "\r\nEnabled: " + settings.Enabled + ", Caps: " + settings.Caps + ", HalfFull: " + settings.HalfFull + "\r\nTarget: " + settings.ProcessName + " / " + settings.WindowClass + "\r\nOS: " + Environment.OSVersion + ", process bits: " + (IntPtr.Size * 8); }
+        private string LayoutStatus()
+        {
+            switch (inputLayout.State)
+            {
+                case ClientLayoutState.Ready: return "Moonlightの配信画面とキー入力の準備ができました。";
+                case ClientLayoutState.MissingUsInput: return "US入力がありません。補助を終了し、同梱の\nStart-MoonlightImeClient.cmd から起動してください。";
+                case ClientLayoutState.NeedsUsInput: return "Moonlightの入力を英語（US）へ切り替えてください。";
+                case ClientLayoutState.Waiting: return "Moonlightの入力配列を切り替えています。キーを離してお待ちください。";
+                case ClientLayoutState.Rejected: return "入力配列を変更できません。Moonlightで英語（US）を選んでください。";
+                case ClientLayoutState.Unavailable: return "Moonlightの入力配列を確認できません。";
+                default: return "対象キーの補助は停止中です。";
+            }
+        }
+        internal string Status() { return (error.Length > 0 ? "送信エラー: " + error : !settings.Enabled ? "補助は停止中です。" : target ? LayoutStatus() : "Moonlightの配信画面が前面になるのを待っています。") + "\n英数: 押下 " + down[0] + " ／ 解放 " + up[0] + "\n半角全角: 押下 " + down[1] + " ／ 解放 " + up[1] + "\n送信した切り替え: " + sent + " 回"; }
+        internal string Diagnostic() { return "Moonlight IME bridge v2\r\n" + Status() + "\r\nFailures: " + failures + "\r\nEnabled: " + settings.Enabled + ", Caps: " + settings.Caps + ", HalfFull: " + settings.HalfFull + ", AutomaticUsInput: " + settings.AutomaticUsInput + "\r\nTarget: " + settings.ProcessName + " / " + settings.WindowClass + "\r\nLast Moonlight class: " + lastMoonlightClass + "\r\nLast stream layout: " + lastTargetLayout + "\r\nLast target key: " + lastKey + "\r\nOS: " + Environment.OSVersion + ", process bits: " + (IntPtr.Size * 8); }
 
         protected override void WndProc(ref Message message)
         {
@@ -193,14 +223,15 @@ namespace PseudoSleep.MoonlightImeClient
                 var scan = (ushort)Marshal.ReadInt16(memory, (int)headerSize);
                 var flags = (ushort)Marshal.ReadInt16(memory, (int)headerSize + 2);
                 var key = (ushort)Marshal.ReadInt16(memory, (int)headerSize + 6);
+                var index = ClientKeyGate.KeyIndex(scan, flags);
+                if (index >= 0) lastKey = "scan=" + scan.ToString("X") + ", flags=" + flags.ToString("X") + ", vk=" + key.ToString("X");
                 if (scan == 0xFF || key == 0xFF) { Cancel(); return; }
                 var isUp = (flags & 1) != 0;
                 var modifierEvent = !isUp && (scan == 0x2A || scan == 0x36 || scan == 0x1D || scan == 0x38 || ((flags & 2) != 0 && (scan == 0x5B || scan == 0x5C)));
-                var index = scan == 0x3A ? 0 : scan == 0x29 ? 1 : -1;
                 if (index >= 0 && (flags & 6) == 0) { if (isUp) up[index]++; else down[index]++; }
                 CheckFocus();
                 var selected = (index == 0 && settings.Caps) || (index == 1 && settings.HalfFull);
-                if (gate.Observe(header.Device.ToInt64(), scan, flags, settings.Enabled && selected && target, modifierEvent || KeyboardNative.ModifiersDown(), context))
+                if (gate.Observe(header.Device.ToInt64(), scan, flags, settings.Enabled && selected && target && layoutReady, modifierEvent || KeyboardNative.ModifiersDown(), context))
                 {
                     // Observe raw events without suppressing them; the host consumes the original JIS signals.
                     if (KeyboardNative.GetForegroundWindow() != foreground) { Cancel(); return; }

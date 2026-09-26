@@ -34,6 +34,23 @@ try {
     $taskRejected = $false
     try { & (Join-Path $PSScriptRoot 'Set-MoonlightClientKeyboard.ps1') -BackupDirectory $taskTestRoot | Out-Null } catch { $taskRejected = $true }
     Assert-ClientTest $taskRejected 'An empty language list was accepted.'
+    # Exercise the packaged launcher with mocked processes; never launch or change host settings.
+    $global:clientKeyboardLanguagesFixture.Add((New-TestLanguage 'ja' @('0411:fixture-ime')))
+    $global:clientKeyboardBarFixture = [pscustomobject]@{IsLegacySwitchingMode=$false;IsLegacyLanguageBar=$true}
+    $global:clientKeyboardLaunches = @()
+    function Get-Process { param([string]$Name) }
+    function Start-Process { param([string]$FilePath, [string]$WorkingDirectory) $global:clientKeyboardLaunches += [pscustomobject]@{FilePath=$FilePath;WorkingDirectory=$WorkingDirectory;Ready=$global:clientKeyboardBarFixture.IsLegacySwitchingMode -and $global:clientKeyboardLanguagesFixture[1].InputMethodTips.Contains('0409:00000409')} }
+    $taskLaunchDirectory = Join-Path $taskTestRoot 'Client Package With Spaces'
+    New-Item -ItemType Directory -Path $taskLaunchDirectory | Out-Null
+    foreach ($taskScript in @('Start-MoonlightImeClient.ps1', 'Set-MoonlightClientKeyboard.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $taskScript) -Destination $taskLaunchDirectory }
+    # Override only the fixture copy's backup default so the launch test stays inside its temporary workspace.
+    $taskSetupCopy = Join-Path $taskLaunchDirectory 'Set-MoonlightClientKeyboard.ps1'
+    $taskSetupText = [IO.File]::ReadAllText($taskSetupCopy).Replace("(Join-Path `$env:LOCALAPPDATA 'PseudoSleepClient\KeyboardBackups')", "(Join-Path `$PSScriptRoot 'Backups')")
+    [IO.File]::WriteAllText($taskSetupCopy, $taskSetupText, [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText((Join-Path $taskLaunchDirectory 'MoonlightImeClient.exe'), 'fixture only')
+    & (Join-Path $taskLaunchDirectory 'Start-MoonlightImeClient.ps1') | Out-Null
+    Assert-ClientTest ($global:clientKeyboardLaunches.Count -eq 1 -and $global:clientKeyboardLaunches[0].Ready) 'Launcher did not prepare input before starting the client.'
+    Assert-ClientTest ($global:clientKeyboardLaunches[0].FilePath -eq (Join-Path $taskLaunchDirectory 'MoonlightImeClient.exe') -and $global:clientKeyboardLaunches[0].WorkingDirectory -eq $taskLaunchDirectory) 'Launcher did not preserve the extracted package path.'
 } finally {
     if (Test-Path -LiteralPath $taskTestRoot) {
         $taskResolved = (Resolve-Path -LiteralPath $taskTestRoot).Path

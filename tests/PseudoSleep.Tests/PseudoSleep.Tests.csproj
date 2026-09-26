@@ -4,4 +4,5 @@
   <ItemGroup><Compile Include="../../src/PseudoSleep/RemoteImeConfiguration.cs" Link="KeyboardBridge/RemoteImeConfiguration.cs" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../../src/PseudoSleep.Core/PseudoSleep.Core.csproj" /></ItemGroup>
   <ItemGroup><Compile Include="../../src/PseudoSleep/Storage.cs" Link="App/Storage.cs" /><Compile Include="../../src/PseudoSleep/CommandCompletion.cs" Link="App/CommandCompletion.cs" /><Compile Include="../../src/PseudoSleep/SunshineSessionMonitor.cs" Link="App/SunshineSessionMonitor.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="../../src/KeyboardBridge.Shared/ClientLayoutGuard.cs" Link="KeyboardBridge/ClientLayoutGuard.cs" /></ItemGroup>
 </Project>

@@ -8,11 +8,19 @@ namespace PseudoSleep.KeyboardBridge
         private sealed class Press { internal bool Eligible; internal long Context; }
         private readonly Dictionary<long, Dictionary<int, Press>> devices = new Dictionary<long, Dictionary<int, Press>>();
 
+        internal static int KeyIndex(int scan, int flags)
+        {
+            if (scan < 0 || scan >= 0xFF || (flags & 6) != 0) return -1;
+            scan &= 0x7F;
+            return scan == 0x3A ? 0 : scan == 0x29 ? 1 : -1;
+        }
+
         internal bool Observe(long device, int scan, int flags, bool eligible, bool modifiers, long context)
         {
             if (device == 0) return false;
             if (modifiers) Cancel();
-            if ((flags & 6) != 0 || (scan != 0x3A && scan != 0x29)) return false;
+            if (KeyIndex(scan, flags) < 0) return false;
+            scan &= 0x7F;
             if (!devices.ContainsKey(device)) devices.Add(device, new Dictionary<int, Press>());
             var keys = devices[device];
             if ((flags & 1) == 0)
