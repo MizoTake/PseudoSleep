@@ -8,8 +8,11 @@ internal static class Program
     [StructLayout(LayoutKind.Sequential)] private struct Input { internal uint Type; internal Payload Data; }
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] inputs, int size);
 
-    [STAThread] private static int Main()
+    [STAThread] private static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "guardian") return Guardian.Run(int.Parse(args[1]), args[2]);
+        if (args.Length > 0 && args[0] == "--audio") return AudioSmoke.Run();
+        if (args.Length > 0 && args[0] == "--virtual-ui") return VirtualDisplayUiSmoke.Run(args);
         // Explicit local smoke only. Never emit an IME toggle or printable key into the user's foreground app.
         Application.EnableVisualStyles();
         using var dispatcher = new Control();

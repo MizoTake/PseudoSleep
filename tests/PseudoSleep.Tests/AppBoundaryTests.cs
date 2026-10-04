@@ -40,6 +40,7 @@ internal static class AppBoundaryTests
         void IDisplayBackend.ShowVirtualOnly(AppConfig config) { }
         void IDisplayBackend.ChangeVirtualResolution(AppConfig config) { }
         void IDisplayBackend.ConfigureNormalDisplay(AppConfig config) { }
+        void IDisplayBackend.ShowVirtualExtended(AppConfig config) { }
         void IDisplayBackend.Restore(DisplayBackup backup) => Restored = true;
         void IPowerLease.Acquire() => PowerReleased = false;
         void IPowerLease.Release() => PowerReleased = true;

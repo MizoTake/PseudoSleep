@@ -35,7 +35,7 @@ internal static class Program
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.ThrowException);
                 Storage.Log("App start.");
                 // Restore a pending transaction before reading an editable configuration file.
-                if (File.Exists(Storage.StatePath) && Guardian.RecoverStandalone() != 0) Storage.Log("Startup recovery incomplete; entering sleep will remain blocked.");
+                if ((File.Exists(Storage.StatePath) || File.Exists(Storage.AudioStatePath)) && Guardian.RecoverStandalone() != 0) Storage.Log("Startup recovery incomplete; pending display or audio backups are preserved.");
                 using var context = new TrayContext();
                 Application.Run(context);
                 return 0;
@@ -58,6 +58,10 @@ internal static class Program
         {
             case "displays": result = DisplayManager.Enumerate(); break;
             case "devices": result = InputWindow.Enumerate(); break;
+            case "audio-status":
+                var audioConfig = Storage.LoadConfig();
+                result = new { outputs = ((IAudioBackend)new AudioBackend()).GetDefaultVolumes(), moonlightConnected = new SunshineConnectionMonitor().Poll(Path.Combine(Path.GetDirectoryName(audioConfig.Sunshine.ConfigPath)!, "sunshine.log"), SunshineHost.IsRunning(audioConfig.Sunshine.ServiceName)), recoveryPending = File.Exists(Storage.AudioStatePath) };
+                break;
             case "restart-sunshine":
                 if (args.Length != 2) throw new ArgumentException("restart-sunshine <service-name>");
                 SunshineHost.RestartForDisconnect(args[1]); result = new { restarted = args[1] }; break;
@@ -96,7 +100,7 @@ internal static class Program
                 }
                 result = new { restored = true };
                 break;
-            case "sleep": case "wake": case "toggle": case "status": case "settings": case "exit": case "client-mode": case "stream-start": case "stream-stop": case "apply-settings":
+            case "sleep": case "wake": case "toggle": case "status": case "config-status": case "settings": case "exit": case "client-mode": case "stream-start": case "stream-stop": case "apply-settings":
                 var testSeconds = args.Skip(1).FirstOrDefault(a => a.StartsWith("--test-seconds=", StringComparison.Ordinal));
                 var command = new Command(args[0].ToLowerInvariant(), testSeconds == null ? 0 : int.Parse(testSeconds.Split('=')[1]), Force: args.Contains("--force"));
                 if (command.Name is "client-mode" or "stream-start")
@@ -117,14 +121,14 @@ internal static class Program
                     try
                     {
                         if (command.Name == "wake") { var code = Guardian.RecoverStandalone(command.Force); response = new(code == 0, new { state = code == 0 ? "Normal" : "Error", resident = false }); }
-                        else if (command.Name is "status" or "exit" or "stream-stop") response = new(true, new { state = File.Exists(Storage.StatePath) ? "RecoveryPending" : "Normal", resident = false });
+                        else if (command.Name is "status" or "exit" or "stream-stop") response = new(true, new { state = File.Exists(Storage.StatePath) || File.Exists(Storage.AudioStatePath) ? "RecoveryPending" : "Normal", resident = false });
                         else response = new(false, null, "Start PseudoSleep.exe first, then run this command.");
                     }
                     finally { mutex.ReleaseMutex(); }
                 }
                 Console.WriteLine(JsonSerializer.Serialize(response, Storage.Json));
                 return response.Success ? 0 : 1;
-            default: result = new { usage = "PseudoSleep.exe [tray|sleep [--test-seconds=15]|wake --force|toggle|status|settings|exit|displays|devices|diagnose|client-mode [width height]|backup <file>|restore-backup <file>]" }; break;
+            default: result = new { usage = "PseudoSleep.exe [tray|sleep [--test-seconds=15]|wake --force|toggle|status|settings|exit|displays|devices|audio-status|diagnose|client-mode [width height]|backup <file>|restore-backup <file>]" }; break;
         }
         Console.WriteLine(JsonSerializer.Serialize(result, Storage.Json));
         return 0;

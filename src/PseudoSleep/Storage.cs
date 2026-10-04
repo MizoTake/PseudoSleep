@@ -11,9 +11,11 @@ internal static class Storage
     internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PseudoSleep");
     internal static readonly string ConfigPath = Path.Combine(ConfigDirectory, "config.json");
     internal static readonly string StatePath = Path.Combine(DataDirectory, "state.json");
+    internal static readonly string AudioStatePath = Path.Combine(DataDirectory, "audio-state.json");
     internal static readonly string LogDirectory = Path.Combine(DataDirectory, "Logs");
     internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
     private static readonly object logLock = new();
+    internal static string? LoadedConfigHash { get; private set; }
 
     internal static void Write<T>(string path, T value)
     {
@@ -30,8 +32,15 @@ internal static class Storage
     internal static AppConfig LoadConfig()
     {
         if (!File.Exists(ConfigPath)) Write(ConfigPath, new AppConfig());
-        var config = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(ConfigPath, Encoding.UTF8), Json) ?? throw new InvalidDataException("Empty config.json");
+        var text = File.ReadAllText(ConfigPath, Encoding.UTF8);
+        var config = JsonSerializer.Deserialize<AppConfig>(text, Json) ?? throw new InvalidDataException("Empty config.json");
         config.Validate();
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+        if (LoadedConfigHash != hash)
+        {
+            LoadedConfigHash = hash;
+            Log($"Loaded config: sha256={hash}; path={ConfigPath}; keepVirtual={config.KeepVirtualDisplayInNormalMode}; driver={config.VirtualDisplayDriverInstanceId}; wakeDevices={config.WakeDevices.Count}; executable={Environment.ProcessPath}");
+        }
         return config;
     }
 

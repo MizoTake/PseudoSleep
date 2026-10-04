@@ -1,11 +1,12 @@
 namespace PseudoSleep.Core;
 
-public enum AppState { Normal, EnteringPseudoSleep, PseudoSleep, Waking, Recovery, Error }
+public enum AppState { Normal, EnteringPseudoSleep, PseudoSleep, Waking, Recovery, Error, PreparingVirtualDisplay, VirtualDisplayReady }
 
 public sealed class AppConfig
 {
     public string VirtualDisplayDevicePath { get; set; } = "";
     public string VirtualDisplayDeviceId { get; set; } = "";
+    public string VirtualDisplayDriverInstanceId { get; set; } = "";
     public int WakeGuardMs { get; set; } = 3000;
     public List<string> WakeDevices { get; set; } = [];
     public List<string> IgnoredDevices { get; set; } = ["*Sunshine*", "*Virtual*", "*RDP*"];
@@ -18,6 +19,7 @@ public sealed class AppConfig
     public bool KeepVirtualDisplayInNormalMode { get; set; }
     public bool SleepOnMoonlightConnect { get; set; } = true;
     public bool DisconnectMoonlightOnWake { get; set; } = true;
+    public bool SilenceAudioWhenDisconnected { get; set; } = true;
     public bool EnableRemoteImeBridge { get; set; }
     public int LastClientWidth { get; set; }
     public int LastClientHeight { get; set; }
@@ -25,6 +27,7 @@ public sealed class AppConfig
 
     public void Validate()
     {
+        if (!string.IsNullOrEmpty(VirtualDisplayDriverInstanceId) && (KeepVirtualDisplayInNormalMode || string.IsNullOrWhiteSpace(VirtualDisplayDevicePath))) throw new ArgumentException("Driver power control requires an on-demand virtual display and a configured display path.");
         if (WakeGuardMs is < 0 or > 10000) throw new ArgumentException("WakeGuardMs must be 0..10000.");
         if (Width is < 640 or > 16384 || Height is < 480 or > 16384 || RefreshRate is < 24 or > 1000) throw new ArgumentException("Invalid display mode.");
         if (WakeDevices is null || IgnoredDevices is null || Sunshine is null) throw new ArgumentException("Configuration lists and Sunshine must not be null.");
@@ -43,7 +46,10 @@ public sealed class SunshineConfig
 }
 
 public sealed record DisplayInfo(string DevicePath, string Name, string SourceName, bool Active, bool Indirect, uint Width, uint Height, int X, int Y, double RefreshRate);
-public sealed record DisplayBackup(string Paths, string Modes, List<string> DevicePaths, DateTimeOffset SavedAt);
+public sealed record DisplayBackup(string Paths, string Modes, List<string> DevicePaths, DateTimeOffset SavedAt)
+{
+    public string VirtualDisplayDriverInstanceId { get; init; } = "";
+}
 public sealed record RecoveryRecord(int Version, AppState State, DisplayBackup Backup, DateTimeOffset SavedAt);
 
 public interface IDisplayBackend
@@ -54,6 +60,7 @@ public interface IDisplayBackend
     void ShowVirtualOnly(AppConfig config);
     void ChangeVirtualResolution(AppConfig config);
     void ConfigureNormalDisplay(AppConfig config);
+    void ShowVirtualExtended(AppConfig config);
     void Restore(DisplayBackup backup);
 }
 

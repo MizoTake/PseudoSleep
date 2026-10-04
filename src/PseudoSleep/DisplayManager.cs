@@ -50,10 +50,17 @@ internal sealed class DisplayManager : IDisplayBackend
         var paths = snapshot.Paths.Where(p => config.KeepVirtualDisplayInNormalMode || !Same(Name(p).Path, config.VirtualDisplayDevicePath)).ToArray();
         if (paths.Length == 0) throw new InvalidOperationException("No local display to back up. Restore physical displays before entering sleep.");
         if (!paths.Any(p => !IsVirtual(p) && p.Source.ModeIndex < snapshot.Modes.Length && snapshot.Modes[p.Source.ModeIndex].X == 0 && snapshot.Modes[p.Source.ModeIndex].Y == 0)) throw new InvalidOperationException("Make a physical display primary before entering sleep.");
-        return new(Convert.ToBase64String(MemoryMarshal.AsBytes(paths.AsSpan())), Convert.ToBase64String(MemoryMarshal.AsBytes(snapshot.Modes.AsSpan())), paths.Select(p => Name(p).Path).ToList(), DateTimeOffset.UtcNow);
+        return new(Convert.ToBase64String(MemoryMarshal.AsBytes(paths.AsSpan())), Convert.ToBase64String(MemoryMarshal.AsBytes(snapshot.Modes.AsSpan())), paths.Select(p => Name(p).Path).ToList(), DateTimeOffset.UtcNow) { VirtualDisplayDriverInstanceId = config.VirtualDisplayDriverInstanceId };
     }
 
     void IDisplayBackend.ConfigureNormalDisplay(AppConfig config)
+    {
+        ConfigureDisplay(config, config.KeepVirtualDisplayInNormalMode);
+    }
+
+    void IDisplayBackend.ShowVirtualExtended(AppConfig config) => ConfigureDisplay(config, true);
+
+    private void ConfigureDisplay(AppConfig config, bool virtualEnabled)
     {
         var original = Query();
         if (!original.Paths.Any(p => !IsVirtual(p) && p.Source.ModeIndex < original.Modes.Length && original.Modes[p.Source.ModeIndex].X == 0 && original.Modes[p.Source.ModeIndex].Y == 0)) throw new InvalidOperationException("Normal streaming requires a physical primary display.");
@@ -61,9 +68,15 @@ internal sealed class DisplayManager : IDisplayBackend
         var backup = Snapshot(original.Paths, original.Modes);
         try
         {
-            if (!config.KeepVirtualDisplayInNormalMode)
+            if (!virtualEnabled)
             {
-                if (localPaths.Length != original.Paths.Length) { Apply(localPaths, original.Modes, true); VerifyUnchanged(localPaths, original.Modes); Storage.Log("Normal display layout: virtual output disabled by setting."); }
+                Apply(localPaths, original.Modes, true);
+                WaitFor(() => !Query().Paths.Any(p => Same(Name(p).Path, config.VirtualDisplayDevicePath)), "Normal virtual display deactivation");
+                VerifyUnchanged(localPaths, original.Modes);
+                VirtualDisplayDriver.System.SetEnabled(config.VirtualDisplayDriverInstanceId, false);
+                WaitFor(() => string.IsNullOrEmpty(config.VirtualDisplayDriverInstanceId) || !Enumerate().Any(d => Same(d.DevicePath, config.VirtualDisplayDevicePath)), "Virtual display driver shutdown");
+                VerifyUnchanged(localPaths, original.Modes);
+                Storage.Log("Normal display layout saved with virtual output disabled.");
                 return;
             }
             var wasActive = original.Paths.Any(p => Same(Name(p).Path, config.VirtualDisplayDevicePath));
@@ -88,6 +101,8 @@ internal sealed class DisplayManager : IDisplayBackend
 
     void IDisplayBackend.EnableVirtual(AppConfig config)
     {
+        VirtualDisplayDriver.System.SetEnabled(config.VirtualDisplayDriverInstanceId, true);
+        if (!string.IsNullOrEmpty(config.VirtualDisplayDriverInstanceId)) WaitFor(() => Enumerate().Any(d => Same(d.DevicePath, config.VirtualDisplayDevicePath)), "Virtual display driver startup");
         var all = Query(true);
         var candidates = all.Paths.Where(p => p.Target.Available != 0 && Same(Name(p).Path, config.VirtualDisplayDevicePath)).ToArray();
         if (candidates.Length == 0) throw new InvalidOperationException("Configured virtual display is unavailable.");
@@ -221,6 +236,8 @@ internal sealed class DisplayManager : IDisplayBackend
             if (expected.Width != actual.Width || expected.Height != actual.Height || expected.X != actual.X || expected.Y != actual.Y || actualPath.Target.Rotation != remapped[i].Target.Rotation || Math.Abs(expectedHz - actualHz) > 0.02) throw new InvalidOperationException($"Display is active but the saved mode or position was not restored: {backup.DevicePaths[i]}");
         }
         _ = PostMessage(0xffff, 0x112, 0xf170, -1);
+        VirtualDisplayDriver.System.SetEnabled(backup.VirtualDisplayDriverInstanceId, false);
+        VerifyUnchanged(remapped, modes);
         Storage.Log("Saved display topology restored; original primary and positions requested.");
     }
 

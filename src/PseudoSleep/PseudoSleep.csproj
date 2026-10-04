@@ -10,4 +10,8 @@
   <ItemGroup><ProjectReference Include="../PseudoSleep.Core/PseudoSleep.Core.csproj" /></ItemGroup>
   <ItemGroup><Compile Include="../KeyboardBridge.Shared/*.cs" Link="KeyboardBridge/%(Filename)%(Extension)" /></ItemGroup>
   <ItemGroup><InternalsVisibleTo Include="PseudoSleep.NativeTests" /></ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../scripts/DriverPower.Common.ps1" LogicalName="PseudoSleep.DriverPower.Common.ps1" />
+    <EmbeddedResource Include="../../scripts/DriverPower.Tasks.ps1" LogicalName="PseudoSleep.DriverPower.Tasks.ps1" />
+  </ItemGroup>
 </Project>

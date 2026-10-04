@@ -2,6 +2,8 @@ using PseudoSleep.Core;
 
 namespace PseudoSleep;
 
+internal enum VirtualDisplayAction { Start, Restart, Stop }
+
 internal sealed class SettingsForm : Form
 {
     private readonly AppConfig config;
@@ -16,13 +18,18 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox followClient = new() { Text = "Moonlightから要求された解像度に合わせる", AutoSize = true };
     private readonly CheckBox sleepOnConnect = new() { Text = "Moonlight接続時に物理画面を消灯する", AutoSize = true };
     private readonly CheckBox disconnectOnWake = new() { Text = "物理画面の復帰時にMoonlightを切断する", AutoSize = true };
+    private readonly CheckBox silenceAudio = new() { Text = "疑似スリープ中、Moonlight未接続時は音量を0にする", AutoSize = true };
     private readonly TextBox ignored = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     private readonly Label captureStatus = new() { AutoSize = true, Text = "登録済みの物理デバイスだけが復帰に使用されます。" };
     private DateTime captureStarts;
     private DateTime captureEnds;
     private readonly List<DisplayInfo> choices;
+    private readonly Label virtualStatus = new() { AutoSize = true, MaximumSize = new Size(620, 0) };
+    private readonly FlowLayoutPanel virtualButtons = new() { Dock = DockStyle.Fill };
+    private readonly Button save = new() { Text = "保存", Name = "SaveSettings", AutoSize = true };
+    private bool virtualBusy;
 
-    internal SettingsForm(AppConfig config, bool editable)
+    internal SettingsForm(AppConfig config, bool editable, Func<VirtualDisplayAction, Action<string>, Task<string>>? controlVirtualDisplay = null, Func<bool>? canSave = null)
     {
         this.config = config;
         Text = "PseudoSleep 設定";
@@ -32,13 +39,15 @@ internal sealed class SettingsForm : Form
         Size = new Size(900, 960);
         AutoScroll = true;
         StartPosition = FormStartPosition.CenterScreen;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(20), ColumnCount = 2, RowCount = 15 };
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(20), ColumnCount = 2, RowCount = 16 };
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 175));
         layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         Controls.Add(layout);
         choices = DisplayManager.Enumerate().Where(d => d.Indirect).ToList();
+        if (!string.IsNullOrEmpty(config.VirtualDisplayDriverInstanceId) && !choices.Any(d => string.Equals(d.DevicePath, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase))) choices.Add(new(config.VirtualDisplayDevicePath, "登録済み仮想画面（通常時は停止）", "", false, true, 0, 0, 0, 0, 0));
         foreach (var item in choices) display.Items.Add($"{item.Name} — {item.DevicePath}");
         display.SelectedIndex = choices.FindIndex(d => string.Equals(d.DevicePath, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase));
+        display.Enabled = string.IsNullOrEmpty(config.VirtualDisplayDriverInstanceId);
         deviceId.Text = config.VirtualDisplayDeviceId;
         deviceId.PlaceholderText = "通常時に仮想画面を無効にする構成ではID入力不要";
         deviceId.ReadOnly = !config.KeepVirtualDisplayInNormalMode;
@@ -53,9 +62,43 @@ internal sealed class SettingsForm : Form
         sleepOnConnect.Checked = config.SleepOnMoonlightConnect;
         sleepOnConnect.Enabled = config.KeepVirtualDisplayInNormalMode;
         disconnectOnWake.Checked = config.DisconnectMoonlightOnWake;
+        silenceAudio.Checked = config.SilenceAudioWhenDisconnected;
         disconnectOnWake.Enabled = config.KeepVirtualDisplayInNormalMode;
         ignored.Text = string.Join(Environment.NewLine, config.IgnoredDevices);
-        AddRow(layout, 0, "仮想ディスプレイ", display, 45);
+        var virtualPanel = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3 };
+        virtualPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+        virtualPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
+        virtualPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        virtualPanel.Controls.Add(display, 0, 0);
+        virtualPanel.Controls.Add(virtualButtons, 0, 1);
+        virtualPanel.Controls.Add(virtualStatus, 0, 2);
+        virtualStatus.Text = "保存済みの設定で操作します。通常起動時は自動で有効になりません。";
+        foreach (var (action, text) in new[] { (VirtualDisplayAction.Start, "起動"), (VirtualDisplayAction.Restart, "再起動"), (VirtualDisplayAction.Stop, "停止して通常に戻す") })
+        {
+            var button = new Button { Text = text, Name = "VirtualDisplay" + action, AutoSize = true, Enabled = controlVirtualDisplay != null };
+            button.Click += async (_, _) =>
+            {
+                if (virtualBusy || controlVirtualDisplay == null) return;
+                virtualBusy = true;
+                virtualButtons.Enabled = false;
+                save.Enabled = false;
+                virtualStatus.Text = "仮想ディスプレイを確認しています…";
+                try
+                {
+                    virtualStatus.Text = await controlVirtualDisplay(action, message => virtualStatus.Text = message);
+                }
+                catch (Exception ex) { virtualStatus.Text = ex.Message; Storage.Log($"Settings virtual display {action}: {ex}"); }
+                finally
+                {
+                    virtualBusy = false;
+                    virtualButtons.Enabled = true;
+                    save.Enabled = canSave?.Invoke() ?? editable;
+                }
+            };
+            virtualButtons.Controls.Add(button);
+        }
+        FormClosing += (_, e) => { if (virtualBusy) e.Cancel = true; };
+        AddRow(layout, 0, "仮想ディスプレイ", virtualPanel, 175);
         AddRow(layout, 1, "Sunshine画面ID", deviceId, 45);
         AddRow(layout, 2, "幅 / 高さ / Hz", new FlowLayoutPanel { Dock = DockStyle.Fill, Controls = { width, height, hz } }, 45);
         width.Width = 130; height.Width = 130; hz.Width = 100;
@@ -75,14 +118,16 @@ internal sealed class SettingsForm : Form
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         layout.Controls.Add(disconnectOnWake, 1, 11);
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
-        var audio = new Label { AutoSize = true, MaximumSize = new Size(600, 0), Text = "音声はMoonlight側の「ホストPCで音声を再生」で切り替えます。\nオフ：操作端末のみ ／ オン：メインPCでも再生（再接続時に反映）" };
-        AddRow(layout, 12, "配信中の音声", audio, 65);
+        layout.Controls.Add(silenceAudio, 1, 12);
+        layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
+        var audio = new Label { AutoSize = true, MaximumSize = new Size(600, 0), Text = "接続時・疑似スリープ解除時に元の音量へ戻します。\n配信中はMoonlight側の「ホストPCで音声を再生」で切り替えます。\nオフ：操作端末のみ ／ オン：ホストでも再生（再接続時に反映）" };
+        AddRow(layout, 13, "音声", audio, 85);
         var status = new Label { AutoSize = true, Text = $"Sunshine: {(SunshineHost.IsRunning(config.Sunshine.ServiceName) ? "Running" : "Stopped")}  /  強制復帰: Ctrl + Alt + Shift + F12" };
-        layout.Controls.Add(status, 1, 13);
+        layout.Controls.Add(status, 1, 14);
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
-        var save = new Button { Text = "保存", AutoSize = true, Enabled = editable };
+        save.Enabled = editable;
         save.Click += (_, _) => Save();
-        layout.Controls.Add(save, 1, 14);
+        layout.Controls.Add(save, 1, 15);
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 45));
         if (!editable) captureStatus.Text = "通常状態に戻してから設定を変更してください。";
     }
@@ -116,6 +161,7 @@ internal sealed class SettingsForm : Form
             config.FollowClientResolution = followClient.Checked;
             config.SleepOnMoonlightConnect = sleepOnConnect.Checked;
             config.DisconnectMoonlightOnWake = disconnectOnWake.Checked;
+            config.SilenceAudioWhenDisconnected = silenceAudio.Checked;
             config.Validate();
             Storage.Write(Storage.ConfigPath, config);
             Close();

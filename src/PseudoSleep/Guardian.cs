@@ -32,14 +32,28 @@ internal sealed class Guardian : IGuardian, IDisposable
         if (!owns) return 0;
         try
         {
-            if (!File.Exists(Storage.StatePath)) return 0;
-            Storage.Log("Parent exited with recovery pending; restoring physical displays.");
+            if (!File.Exists(Storage.StatePath) && !File.Exists(Storage.AudioStatePath)) return 0;
+            Storage.Log("Parent exited with recovery pending; restoring physical displays and audio.");
             return RecoverStandalone();
         }
         finally { mutex.ReleaseMutex(); }
     }
 
     internal static int RecoverStandalone(bool force = false)
+    {
+        // Audio failures must never prevent physical display recovery, and vice versa.
+        var displayResult = RecoverDisplays(force);
+        using var audioGuardian = new Guardian();
+        var audio = new AudioController(new AudioBackend(), new AudioRecoveryJournal(), audioGuardian);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try { audio.Restore(); return displayResult; }
+            catch (Exception ex) { Storage.Log($"Independent audio recovery attempt {attempt + 1}: {ex}"); if (attempt < 2) Thread.Sleep(1000); }
+        }
+        return 1;
+    }
+
+    private static int RecoverDisplays(bool force)
     {
         IRecoveryJournal journal = new RecoveryJournal();
         IDisplayBackend displays = new DisplayManager();

@@ -6,11 +6,13 @@ public sealed class SleepController(IDisplayBackend displays, IRecoveryJournal j
     public string? LastError { get; private set; }
     public event Action? Changed;
     private long wakeAllowedAt;
+    private (string Path, string Driver)? preparedTarget;
 
     public void Enter(AppConfig config)
     {
         if (State == AppState.PseudoSleep) return;
-        if (State != AppState.Normal || journal.Read() != null) throw new InvalidOperationException("Recover the previous display configuration before entering sleep.");
+        var preparedBackup = ReadPreparedBackup(config);
+        if (State is not (AppState.Normal or AppState.VirtualDisplayReady) || (journal.Read() != null && preparedBackup == null)) throw new InvalidOperationException("Recover the previous display configuration before entering sleep.");
         config.Validate();
         var displayConfig = config.FollowClientResolution && config.LastClientWidth != 0 ? config.WithResolution(config.LastClientWidth, config.LastClientHeight) : config;
         if (string.IsNullOrWhiteSpace(config.VirtualDisplayDevicePath)) throw new InvalidOperationException("仮想ディスプレイを設定してください。");
@@ -19,7 +21,7 @@ public sealed class SleepController(IDisplayBackend displays, IRecoveryJournal j
         SetState(AppState.EnteringPseudoSleep);
         try
         {
-            var backup = displays.Capture(config);
+            var backup = preparedBackup ?? displays.Capture(config);
             journal.Save(new(1, State, backup, DateTimeOffset.UtcNow));
             guardian.EnsureReady();
             if (config.PreventSystemSleep) power.Acquire();
@@ -43,23 +45,60 @@ public sealed class SleepController(IDisplayBackend displays, IRecoveryJournal j
 
     public void Wake() => Wake(null);
 
+    public void PrepareVirtualDisplay(AppConfig config, bool restart = false)
+    {
+        var backup = ReadPreparedBackup(config);
+        if (State is not (AppState.Normal or AppState.VirtualDisplayReady) || (journal.Read() != null && backup == null)) throw new InvalidOperationException("通常状態に戻してから仮想ディスプレイを操作してください。");
+        config.Validate();
+        if (string.IsNullOrWhiteSpace(config.VirtualDisplayDevicePath) || string.IsNullOrWhiteSpace(config.VirtualDisplayDriverInstanceId)) throw new InvalidOperationException("復旧対象の仮想ディスプレイとドライバーを登録してください。");
+        SetState(AppState.PreparingVirtualDisplay);
+        try
+        {
+            backup ??= displays.Capture(config);
+            journal.Save(new(1, State, backup, DateTimeOffset.UtcNow));
+            guardian.EnsureReady();
+            if (restart) displays.Restore(backup);
+            displays.ShowVirtualExtended(config);
+            displays.VerifyVirtual(config);
+            journal.Save(new(1, AppState.VirtualDisplayReady, backup, DateTimeOffset.UtcNow));
+            preparedTarget = (config.VirtualDisplayDevicePath, config.VirtualDisplayDriverInstanceId);
+            LastError = null;
+            SetState(AppState.VirtualDisplayReady);
+        }
+        catch (Exception ex)
+        {
+            LastError = ex.Message;
+            log($"Manual virtual display preparation failed: {ex}");
+            try { Recover(); } catch (Exception recoveryError) { log($"Manual virtual display recovery failed: {recoveryError}"); }
+            throw;
+        }
+    }
+
+    private DisplayBackup? ReadPreparedBackup(AppConfig config)
+    {
+        if (State != AppState.VirtualDisplayReady) return null;
+        if (preparedTarget is not { } target || !string.Equals(target.Path, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase) || !string.Equals(target.Driver, config.VirtualDisplayDriverInstanceId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("通常状態に戻してから仮想ディスプレイの登録先を変更してください。");
+        return journal.Read()?.Backup ?? throw new InvalidOperationException("仮想画面の復旧情報が見つかりません。");
+    }
+
     public void Wake(AppConfig? config)
     {
         if (State == AppState.Normal && journal.Read() == null) return;
+        var manualOnly = State == AppState.VirtualDisplayReady;
         SetState(AppState.Waking);
         Restore();
-        if (config?.DisconnectMoonlightOnWake == true) host.Disconnect(config);
+        if (!manualOnly && config?.DisconnectMoonlightOnWake == true) host.Disconnect(config);
     }
 
     public bool StartStream(int width, int height, AppConfig config)
     {
         if (!config.KeepVirtualDisplayInNormalMode && (!config.SleepOnMoonlightConnect || !config.DisconnectMoonlightOnWake)) throw new InvalidOperationException("On-demand virtual output requires physical-display sleep and disconnection on wake so a resumed stream cannot capture physical displays.");
-        if (State is not (AppState.Normal or AppState.PseudoSleep)) throw new InvalidOperationException("Recover the display configuration before streaming.");
+        if (State is not (AppState.Normal or AppState.PseudoSleep or AppState.VirtualDisplayReady)) throw new InvalidOperationException("Recover the display configuration before streaming.");
         var requested = config.FollowClientResolution ? config.WithResolution(width, height) : config;
         var enteredForStream = false;
         try
         {
-            if (config.SleepOnMoonlightConnect && State == AppState.Normal)
+            if (config.SleepOnMoonlightConnect && State is AppState.Normal or AppState.VirtualDisplayReady)
             {
                 if (config.FollowClientResolution) { requested.LastClientWidth = width; requested.LastClientHeight = height; }
                 Enter(requested);
@@ -107,6 +146,7 @@ public sealed class SleepController(IDisplayBackend displays, IRecoveryJournal j
         {
             var pending = journal.Read();
             if (pending != null) { displays.Restore(pending.Backup); journal.Clear(); }
+            preparedTarget = null;
             LastError = null;
             SetState(AppState.Normal);
         }

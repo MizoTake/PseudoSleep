@@ -16,11 +16,17 @@ internal sealed class TrayContext : ApplicationContext
     private readonly System.Windows.Forms.Timer restoreTimer = new();
     private readonly System.Windows.Forms.Timer sessionTimer = new() { Interval = 1000 };
     private readonly SunshineSessionMonitor sessionMonitor = new();
+    private readonly SunshineConnectionMonitor connectionMonitor = new();
+    private readonly AudioController audio;
+    private bool? moonlightConnected;
+    private string? audioError;
+    private readonly NormalDisplayMonitor normalDisplayMonitor;
     private readonly Icon normalIcon = MakeIcon(false);
     private readonly Icon sleepingIcon = MakeIcon(true);
     private SettingsForm? settings;
     private AppConfig config;
     private bool disposed;
+    private bool virtualDisplayBusy;
 
     internal TrayContext()
     {
@@ -29,6 +35,8 @@ internal sealed class TrayContext : ApplicationContext
         input = new InputWindow();
         imeBridge = new RemoteImeBridge(dispatcher);
         controller = new(new DisplayManager(), new RecoveryJournal(), power, guardian, new SunshineHost(), () => Environment.TickCount64, Storage.Log);
+        audio = new(new AudioBackend(), new AudioRecoveryJournal(), guardian);
+        normalDisplayMonitor = new(Storage.LoadConfig, DisplayManager.Enumerate, value => controller.PrepareNormalDisplay(value), Storage.Log, value => !string.IsNullOrEmpty(value.VirtualDisplayDriverInstanceId) && VirtualDisplayDriver.ReadEnabled(value.VirtualDisplayDriverInstanceId) != false);
         var menu = new ContextMenuStrip();
         menu.Items.Add("🌙 疑似スリープ", null, (_, _) => Execute(new("sleep")));
         menu.Items.Add("☀ 通常状態に戻す", null, (_, _) => Execute(new("wake")));
@@ -40,7 +48,7 @@ internal sealed class TrayContext : ApplicationContext
         menu.Items.Add("終了（画面を復元）", null, (_, _) => Execute(new("exit")));
         tray = new NotifyIcon { Icon = normalIcon, Text = "PseudoSleep — Normal", ContextMenuStrip = menu, Visible = true };
         tray.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) Execute(new("toggle")); };
-        controller.Changed += () => { if (controller.State != AppState.PseudoSleep) imeBridge.SetActive(false); UpdateIcon(); };
+        controller.Changed += () => { if (controller.State != AppState.PseudoSleep) imeBridge.SetActive(false); UpdateAudio(); UpdateIcon(); };
         input.Input += path =>
         {
             settings?.ObserveInput(path);
@@ -48,7 +56,7 @@ internal sealed class TrayContext : ApplicationContext
         };
         input.ForceWake += () => Execute(new("wake", Force: true));
         restoreTimer.Tick += (_, _) => { restoreTimer.Stop(); Execute(new("wake")); };
-        sessionTimer.Tick += (_, _) => CheckStreamingSession();
+        sessionTimer.Tick += (_, _) => { if (virtualDisplayBusy) return; CheckStreamingSession(); config = normalDisplayMonitor.Poll(config, controller.State, sessionMonitor.Armed, Environment.TickCount64); UpdateAudio(); };
         sessionTimer.Start();
         _ = Ipc.Serve(command =>
         {
@@ -66,6 +74,7 @@ internal sealed class TrayContext : ApplicationContext
     {
         try
         {
+            if (virtualDisplayBusy && command.Name is not ("status" or "settings")) throw new InvalidOperationException("仮想ディスプレイを操作中です。完了してから再試行してください。");
             switch (command.Name)
             {
                 case "toggle": command = command with { Name = controller.State == AppState.Normal ? "sleep" : "wake" }; return Execute(command);
@@ -84,6 +93,7 @@ internal sealed class TrayContext : ApplicationContext
                     PrepareNormalDisplay();
                     break;
                 case "status": return new(true, Status());
+                case "config-status": return new(true, new { loadedHash = Storage.LoadedConfigHash, onDisk = Storage.LoadConfig(), onDiskHash = Storage.LoadedConfigHash, Storage.ConfigPath, process = Environment.ProcessId });
                 case "client-mode": case "stream-start":
                     if (command.Name == "stream-start") imeBridge.SetActive(false);
                     config = RuntimeConfiguration.Load();
@@ -101,6 +111,7 @@ internal sealed class TrayContext : ApplicationContext
                 case "exit": imeBridge.SetActive(false); sessionMonitor.Reset(); controller.Wake(config); PrepareNormalDisplay(); dispatcher.BeginInvoke(ExitThread); break;
                 default: return new(false, null, "Unknown command.");
             }
+            UpdateAudio();
             return new(true, CommandCompletion.ReadStatus(Status, ReportWarning));
         }
         catch (Exception ex) { if (command.Name == "stream-start") imeBridge.SetActive(false); Storage.Log($"Command {command.Name}: {ex}"); NotifyError(ex.Message); return new(false, null, ex.Message); }
@@ -109,7 +120,7 @@ internal sealed class TrayContext : ApplicationContext
     private object Status()
     {
         var displays = DisplayManager.Enumerate();
-        return new { state = controller.State.ToString(), resident = true, physicalDisplays = displays.Count(d => d.Active && !d.Indirect), virtualDisplay = displays.Any(d => d.Active && string.Equals(d.DevicePath, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase)), keepVirtualDisplayInNormalMode = config.KeepVirtualDisplayInNormalMode, powerRequest = power.Active, sunshine = SunshineHost.IsRunning(config.Sunshine.ServiceName), localWakeMonitor = true, wakeDeviceCount = config.WakeDevices.Count, hotkeyRegistered = input.HotkeyRegistered, remoteImeBridgeEnabled = config.EnableRemoteImeBridge, remoteImeBridgeActive = imeBridge.Active, remoteImeToggleCount = imeBridge.ToggleCount, recoveryPending = File.Exists(Storage.StatePath), configPath = Storage.ConfigPath, executable = Environment.ProcessPath, streamMonitored = sessionMonitor.Armed, lastError = controller.LastError };
+        return new { state = controller.State.ToString(), resident = true, physicalDisplays = displays.Count(d => d.Active && !d.Indirect), virtualDisplay = displays.Any(d => d.Active && string.Equals(d.DevicePath, config.VirtualDisplayDevicePath, StringComparison.OrdinalIgnoreCase)), keepVirtualDisplayInNormalMode = config.KeepVirtualDisplayInNormalMode, virtualDisplayDriverInstanceId = config.VirtualDisplayDriverInstanceId, virtualDisplayDriverEnabled = string.IsNullOrEmpty(config.VirtualDisplayDriverInstanceId) ? (bool?)null : VirtualDisplayDriver.ReadEnabled(config.VirtualDisplayDriverInstanceId), powerRequest = power.Active, sunshine = SunshineHost.IsRunning(config.Sunshine.ServiceName), localWakeMonitor = true, wakeDeviceCount = config.WakeDevices.Count, hotkeyRegistered = input.HotkeyRegistered, remoteImeBridgeEnabled = config.EnableRemoteImeBridge, remoteImeBridgeActive = imeBridge.Active, remoteImeToggleCount = imeBridge.ToggleCount, recoveryPending = File.Exists(Storage.StatePath), configPath = Storage.ConfigPath, executable = Environment.ProcessPath, streamMonitored = sessionMonitor.Armed, silenceAudioWhenDisconnected = config.SilenceAudioWhenDisconnected, moonlightConnected, audioRecoveryPending = File.Exists(Storage.AudioStatePath), savedAudioOutputs = audio.PendingEndpoints, audioError, lastError = controller.LastError };
     }
 
     private void CheckStreamingSession()
@@ -125,21 +136,77 @@ internal sealed class TrayContext : ApplicationContext
         Execute(new("wake"));
     }
 
+    private void UpdateAudio(bool restore = false)
+    {
+        try
+        {
+            var previousCount = audio.PendingEndpoints;
+            if (restore || controller.State != AppState.PseudoSleep || !config.SilenceAudioWhenDisconnected) { moonlightConnected = null; audio.Restore(); }
+            else
+            {
+                try { moonlightConnected = connectionMonitor.Poll(Path.Combine(Path.GetDirectoryName(config.Sunshine.ConfigPath)!, "sunshine.log"), SunshineHost.IsRunning(config.Sunshine.ServiceName)); }
+                catch (Exception ex) { moonlightConnected = null; Storage.Log($"Audio connection state unavailable; restoring volume: {ex.Message}"); }
+                audio.Update(controller.State, moonlightConnected);
+            }
+            if (previousCount != audio.PendingEndpoints) Storage.Log(audio.PendingEndpoints == 0 ? "Audio volumes restored; recovery journal cleared." : $"Audio volumes saved for {audio.PendingEndpoints} outputs; disconnected pseudo sleep is silent.");
+            audioError = null;
+        }
+        catch (Exception ex)
+        {
+            var error = ex.GetBaseException().Message;
+            if (audioError != error) { Storage.Log($"Audio control: {ex}"); NotifyError("音量の制御・復元を再試行します: " + error); }
+            audioError = error;
+        }
+    }
+
     private void PrepareNormalDisplay() { if (!string.IsNullOrEmpty(config.VirtualDisplayDevicePath)) controller.PrepareNormalDisplay(config); }
 
     private void ShowSettings()
     {
         if (settings is { IsDisposed: false }) { settings.Activate(); return; }
-        settings = new SettingsForm(RuntimeConfiguration.Load(), controller.State == AppState.Normal);
+        settings = new SettingsForm(RuntimeConfiguration.Load(), controller.State == AppState.Normal, ControlVirtualDisplayAsync, () => controller.State == AppState.Normal);
         settings.FormClosed += (_, _) => { if (controller.State == AppState.Normal) Execute(new("apply-settings")); };
         settings.Show();
+    }
+
+    private async Task<string> ControlVirtualDisplayAsync(VirtualDisplayAction action, Action<string> progress)
+    {
+        if (virtualDisplayBusy) throw new InvalidOperationException("仮想ディスプレイを操作中です。");
+        virtualDisplayBusy = true;
+        try
+        {
+            config = RuntimeConfiguration.Load();
+            VerifyManualDisplayOperation();
+            if (string.IsNullOrEmpty(config.VirtualDisplayDriverInstanceId) || string.IsNullOrEmpty(config.VirtualDisplayDevicePath)) throw new InvalidOperationException("復旧対象のVDDドライバーと仮想ディスプレイを先に登録してください。");
+            await VirtualDisplayTaskSetup.EnsureAsync(config.VirtualDisplayDriverInstanceId, progress);
+            // A connection may have arrived while Windows was waiting for elevation approval.
+            VerifyManualDisplayOperation();
+            if (controller.State == AppState.Error) controller.Recover();
+            if (action == VirtualDisplayAction.Stop)
+            {
+                controller.Wake();
+                PrepareNormalDisplay();
+                return "通常状態に戻しました。仮想ディスプレイは必要なときに再び起動できます。";
+            }
+            controller.PrepareVirtualDisplay(config, action == VirtualDisplayAction.Restart);
+            return (action == VirtualDisplayAction.Restart ? "再起動" : "起動") + "しました。物理画面を維持して仮想画面を追加しています。停止するには「停止して通常に戻す」を押してください。";
+        }
+        finally { virtualDisplayBusy = false; UpdateAudio(); }
+    }
+
+    private void VerifyManualDisplayOperation()
+    {
+        if (controller.State is not (AppState.Normal or AppState.VirtualDisplayReady or AppState.Error)) throw new InvalidOperationException("疑似スリープを解除してから仮想ディスプレイを操作してください。");
+        if (!DisplayManager.Enumerate().Any(d => d.Active && !d.Indirect)) throw new InvalidOperationException("物理画面を復帰させてから操作してください。管理者確認は物理画面が表示されている状態で行います。");
+        var connected = connectionMonitor.Poll(Path.Combine(Path.GetDirectoryName(config.Sunshine.ConfigPath)!, "sunshine.log"), SunshineHost.IsRunning(config.Sunshine.ServiceName));
+        if (connected != false || sessionMonitor.Armed) throw new InvalidOperationException("Moonlightを切断し、接続が終了してから仮想ディスプレイを操作してください。");
     }
 
     private void UpdateIcon() { tray.Icon = controller.State == AppState.PseudoSleep ? sleepingIcon : controller.State == AppState.Error ? SystemIcons.Warning : normalIcon; tray.Text = "PseudoSleep — " + controller.State; }
     private void ReportWarning(string message) { Storage.Log(message); NotifyError(message); }
     private void NotifyError(string message) { try { tray.ShowBalloonTip(8000, "PseudoSleep", message, ToolTipIcon.Warning); } catch (Exception ex) { Storage.Log($"Notification unavailable: {ex.Message}"); } }
     private static void Open(string target) { try { Process.Start(new ProcessStartInfo(target) { UseShellExecute = true }); } catch (Exception ex) { Storage.Log(ex.Message); } }
-    private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e) { try { controller.Wake(); } catch (Exception ex) { Storage.Log($"Session ending: {ex}"); } }
+    private void OnSessionEnding(object sender, Microsoft.Win32.SessionEndingEventArgs e) { try { controller.Wake(); PrepareNormalDisplay(); } catch (Exception ex) { Storage.Log($"Session ending: {ex}"); } finally { UpdateAudio(true); } }
 
     protected override void Dispose(bool disposing)
     {
@@ -149,7 +216,8 @@ internal sealed class TrayContext : ApplicationContext
             Microsoft.Win32.SystemEvents.SessionEnding -= OnSessionEnding;
             stop.Cancel();
             ((IDisposable)imeBridge).Dispose();
-            try { controller.Wake(config); } catch (Exception ex) { Storage.Log($"Exit restore: {ex}"); }
+            try { controller.Wake(config); PrepareNormalDisplay(); } catch (Exception ex) { Storage.Log($"Exit restore: {ex}"); }
+            UpdateAudio(true);
             tray.Visible = false;
             tray.Dispose();
             ((IDisposable)input).Dispose();

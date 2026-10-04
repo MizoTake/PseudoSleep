@@ -50,14 +50,7 @@ internal sealed class SunshineHost : IStreamingHost
     {
         if (!IsRunning(config.Sunshine.ServiceName)) throw new InvalidOperationException($"Sunshineサービスが起動していません: {config.Sunshine.ServiceName}");
         var values = ReadConfiguration(config.Sunshine.ConfigPath);
-        values.TryGetValue("output_name", out var output);
-        if (config.KeepVirtualDisplayInNormalMode)
-        {
-            if (string.IsNullOrWhiteSpace(config.VirtualDisplayDeviceId) || !string.Equals(output, config.VirtualDisplayDeviceId, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Sunshine output_name does not match the configured virtual display ID.");
-        }
-        else if (!string.IsNullOrWhiteSpace(output)) throw new InvalidOperationException("配信中だけ仮想画面を使うには Configure-Sunshine.ps1 を再実行し、Sunshineの出力を自動選択にしてください。");
-        if (!config.KeepVirtualDisplayInNormalMode && !config.DisconnectMoonlightOnWake) throw new InvalidOperationException("配信中だけ仮想画面を使う構成では、物理復帰時の切断を有効にしてください。");
-        if (!values.TryGetValue("dd_configuration_option", out var policy) || policy != "disabled") throw new InvalidOperationException("Sunshine dd_configuration_option must be disabled so it cannot restore a stale virtual-only topology after local wake.");
+        SunshineDisplayPolicy.Verify(config, values);
         if (config.DisconnectMoonlightOnWake) { var service = OpenRestartService(config); CloseServiceHandle(service); }
         Storage.Log("Sunshine service and display ownership configuration verified.");
     }

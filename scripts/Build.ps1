@@ -4,6 +4,8 @@ $taskRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $taskRoot
 try {
     & (Join-Path $PSScriptRoot 'Test-Setup.ps1')
+    & (Join-Path $PSScriptRoot 'Test-DriverPowerSetup.ps1')
+    & (Join-Path $PSScriptRoot 'Test-DriverPowerTasks.ps1')
     & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'Test-ClientKeyboardSetup.ps1')
     if ($LASTEXITCODE -ne 0) { throw 'Client keyboard setup tests failed' }
     dotnet build PseudoSleep.sln -c Release
