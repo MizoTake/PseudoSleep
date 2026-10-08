@@ -1,7 +1,8 @@
 #Requires -RunAsAdministrator
-param([string]$ConfigPath = (Join-Path $env:APPDATA 'PseudoSleep\config.json'), [string]$VirtualAudioSink = '', [switch]$AllowServiceRestart, [ValidateSet('nvenc','quicksync','amdvce','software')][string]$Encoder)
+param([string]$ConfigPath = '', [string]$VirtualAudioSink = '', [switch]$AllowServiceRestart, [ValidateSet('nvenc','quicksync','amdvce','software')][string]$Encoder)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
+if (!$ConfigPath) { $ConfigPath = Join-Path (Get-PseudoSleepDataDirectory) 'config.json' }
 Assert-InteractiveUser
 $taskConfig = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($taskConfig.keepVirtualDisplayInNormalMode -and $taskConfig.virtualDisplayDeviceId -notmatch '^\{[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\}$') { throw 'A Sunshine display GUID is required for a persistent virtual output.' }

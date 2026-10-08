@@ -1,7 +1,7 @@
 param([string]$Executable = (Join-Path (Split-Path $PSScriptRoot -Parent) 'artifacts\publish\PseudoSleep.exe'), [string]$VirtualDevicePath)
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
-$taskConfigPath = Join-Path $env:APPDATA 'PseudoSleep\config.json'
+$taskConfigPath = Join-Path (Get-PseudoSleepDataDirectory) 'config.json'
 & $Executable diagnose | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'PseudoSleep diagnostics failed.' }
 $taskDisplays = (& $Executable displays | Out-String | ConvertFrom-Json)

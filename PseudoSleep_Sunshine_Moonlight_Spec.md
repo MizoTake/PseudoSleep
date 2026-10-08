@@ -50,7 +50,7 @@ IPCと二重起動防止の名前にはユーザーSIDとセッションIDを含
 
 設定の記憶や補助的な状態取得に失敗しても、完了済みの配信準備を失敗応答へ変更しません。復旧ジャーナルの保存は必須のままです。診断ログのI/Oエラーは画面復元処理を妨げません。
 
-設定は`%APPDATA%\PseudoSleep\config.json`、復旧情報とログは`%LOCALAPPDATA%\PseudoSleep`に保存します。Sunshine管理UIの認証情報は保存しません。物理入力のログにはデバイスパスが含まれるため、生ログを公開しません。
+設定は`%USERPROFILE%\.pseudosleep\config.json`、復旧情報とログは`%USERPROFILE%\.pseudosleep`に保存します。Sunshine管理UIの認証情報は保存しません。物理入力のログにはデバイスパスが含まれるため、生ログを公開しません。
 
 ## 音声・起動・権限
 

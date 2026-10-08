@@ -1,7 +1,8 @@
 #Requires -RunAsAdministrator
-param([string]$ConfigPath = (Join-Path $env:APPDATA 'PseudoSleep\config.json'))
+param([string]$ConfigPath = '')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
+if (!$ConfigPath) { $ConfigPath = Join-Path (Get-PseudoSleepDataDirectory) 'config.json' }
 Assert-InteractiveUser
 $taskConfig = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 if ($taskConfig.enableRemoteImeBridge) { throw 'Disable the IME bridge with scripts\Set-RemoteImeBridge.ps1 -Mode Disabled before removing the integration, so the reserved keyboard mappings are restored.' }

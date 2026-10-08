@@ -1,7 +1,8 @@
 #Requires -RunAsAdministrator
-param([Parameter(Mandatory=$true)][ValidateSet('Disabled','Enabled')][string]$Mode, [ValidateRange(1,60000)][int]$DelayMilliseconds = 500, [string]$ConfigPath = (Join-Path $env:APPDATA 'PseudoSleep\config.json'))
+param([Parameter(Mandatory=$true)][ValidateSet('Disabled','Enabled')][string]$Mode, [ValidateRange(1,60000)][int]$DelayMilliseconds = 500, [string]$ConfigPath = '')
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
+if (!$ConfigPath) { $ConfigPath = Join-Path (Get-PseudoSleepDataDirectory) 'config.json' }
 Assert-InteractiveUser
 $taskConfig = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $taskSunshineConfig = $taskConfig.sunshine.configPath

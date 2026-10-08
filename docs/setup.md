@@ -86,7 +86,22 @@ GPUとエンコーダーは機種名で固定しません。新規ドライバ�
 
 インストール先は`%LOCALAPPDATA%\Programs\PseudoSleep`です。現在ユーザーのStartupフォルダーへショートカットを作成し、ログオン時に起動します。SunshineはOS起動時にサービスとして起動します。ログオン前の画面操作は対象外です。
 
-更新時は`Build.ps1 -Publish`の後に`Install-App.ps1 -SkipBuild`を実行します。通常状態に復帰して旧プロセスの終了を待ち、ファイルを更新します。設定はEXEの隣ではなくAppDataに保存するため、ビルド先やフォルダ名の変更でも共有します。`status`には常駐EXEと設定ファイルの場所も表示されます。画面制御アプリなので、日常利用はインストール先のショートカットに統一してください。
+更新時は`Build.ps1 -Publish`の後に`Install-App.ps1 -SkipBuild`を実行します。通常状態に復帰して旧プロセスの終了を待ち、ファイルを更新します。設定・復旧情報・ログは`%USERPROFILE%\.pseudosleep`に保存します。`status`には常駐EXEと設定ファイルの場所、`config-status`には設定を開いたハンドルから取得した実際の保存先とハッシュを表示します。
+
+### 旧AppData保存先からの移行
+
+MSIXアプリから実行した処理ではAppDataへの書き込みがパッケージ専用領域へ転送される場合があります。同じパス表示でも、Windowsの自動起動と開発ツールからの起動で異なる設定を読むため、旧設定を自動では選びません。新しい保存先はこの転送を受けるAppDataの外に統一しています。
+
+旧版で通常状態へ戻して終了し、保持したい`config.json`を確認してバックアップしてから、ビルドした新版で移行します。復旧待ちの画面・音量情報がある間は、旧版で先に復元してください。
+
+```powershell
+.\scripts\Build.ps1 -Publish
+.\scripts\Migrate-Storage.ps1 -ConfigSource '保持したいconfig.jsonの絶対パス' -OldDataDirectory '旧版の復旧情報フォルダーの絶対パス'
+.\scripts\Install-App.ps1 -SkipBuild
+.\artifacts\publish\PseudoSleep.exe config-status | Out-String
+```
+
+旧版の標準設定は`%APPDATA%\PseudoSleep\config.json`、復旧情報は`%LOCALAPPDATA%\PseudoSleep`です。パッケージ専用領域に転送された場合は、その実体のパスを指定します。移行は選んだ設定のバイト列をそのまま保存し、元ファイルは残します。新保存先に異なる設定がある場合や旧版が動作中の場合は停止します。同じ設定の再実行は既存ファイルを変更しません。複数の起動元があった場合は、それぞれで復旧待ちがないことを確認してください。
 
 ## 解像度の追加
 
@@ -104,7 +119,7 @@ Moonlightを「Native」にし、PseudoSleepの「Moonlightから要求された
 
 Windowsのコンソール／マルチメディア用の既定出力を対象に、[Core Audioのマスター音量API](https://learn.microsoft.com/en-us/windows/win32/api/endpointvolume/nf-endpointvolume-iaudioendpointvolume-setmastervolumelevelscalar)を使用します。ミュートフラグ、アプリごとの音量、固定指定された別の出力先は変更しません。Sunshineの接続ログを1秒ごとに確認し、複数クライアントがある場合は最後の切断を基準にします。ログ欠落などで接続状態が不明な場合は、音量を復元します。
 
-元の音量は出力先IDとともに`%LOCALAPPDATA%\PseudoSleep\audio-state.json`へ変更前に保存します。出力先の変更にも対応し、接続時・復帰時・アプリ終了時に各出力の音量を復元します。異常終了時は独立した復旧プロセス、次回起動時は常駐アプリが復元を試みます。一時的に外された機器など、復元できない出力の情報は消さず、常駐中に再試行します。`PseudoSleep.exe audio-status`で既定出力の現在の音量（0～1）、接続判定、復元待ちの有無を読み取れます。
+元の音量は出力先IDとともに`%USERPROFILE%\.pseudosleep\audio-state.json`へ変更前に保存します。出力先の変更にも対応し、接続時・復帰時・アプリ終了時に各出力の音量を復元します。異常終了時は独立した復旧プロセス、次回起動時は常駐アプリが復元を試みます。一時的に外された機器など、復元できない出力の情報は消さず、常駐中に再試行します。`PseudoSleep.exe audio-status`で既定出力の現在の音量（0～1）、接続判定、復元待ちの有無を読み取れます。
 
 仮想音声出力をSunshineの`virtual_sink`へ設定し、Moonlightの「ホストPCで音声を再生」をオフにします。オンに戻すとホストでも音声を再生します。切り替えは再接続時に反映されます。固定出力を使うアプリでは、Windowsの既定出力を利用する設定も必要です。
 

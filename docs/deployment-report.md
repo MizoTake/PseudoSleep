@@ -105,6 +105,19 @@ Windowsの実際の `SendInput` と低レベルフックを使う別の試験で
 - 自己完結・単一ファイルの`artifacts/standalone-win-x64/PseudoSleep.exe`を更新。音量状態CLIと設定画面の描画を確認し、常駐版も更新しました。最終確認は`Normal`、物理3画面、仮想画面なし、VDD無効、音量復元待ちなし、新機能有効です。
 - 証跡：`artifacts/audio-build-20260929.log`、`audio-native-20260929.log`、`audio-verification-20260929.json`、`audio-settings-20260929.png`。実際のMoonlight接続による音量復元、OS再起動、物理音声機器の抜き差しは今回未検証です。
 
+## 2026-10-09：Windows再起動後に別の設定を読む問題の修復
+
+設定ファイルの消失ではなく、AppDataの実体が起動元によって分かれていました。Windows起動時の常駐プロセスが読む設定はSHA256の先頭が`F66AC4F7BD1A`、開発ツールから読み書きしていた設定は`3EDFF549420F`でした。後者のファイルハンドルから取得したパスは、Codexパッケージの`LocalCache\Roaming\PseudoSleep\config.json`でした。[MSIXのAppData転送仕様](https://learn.microsoft.com/en-us/windows/msix/desktop/desktop-to-uwp-behind-the-scenes)とも整合します。前回のパス表示とハッシュの確認だけでは、Windows起動時と開発ツール側の保存先を区別できていませんでした。
+
+設定・画面と音量の復旧情報・ログを、AppDataの外の`%USERPROFILE%\.pseudosleep`へ統一しました。設定を開いたハンドルから実際の保存先を診断表示します。旧設定の移行は利用者が選んだファイルをバイト単位で保持し、別の既存設定の上書きや、旧版動作中・復旧待ちの移行を拒否します。常用設定・旧EXE・画面構成をバックアップしてから正しい設定を移し、自己完結の単一EXEを常用先と`artifacts/standalone-win-x64`へ配置しました。
+
+- 移行テストの失敗を確認してから実装し、全164/164成功。Releaseビルドは警告0・エラー0。セットアップ／構文91件、タスク修復13件、クライアント設定10件、タスク定義とコンソールなしCLIの検証も成功しました。
+- 一時的なユーザー実行タスクでWindows側から起動し、旧設定が`F66AC4F7BD1A`であること、新版は共通保存先の`3EDFF549420F`を読むことを確認しました。検証用タスクは終了後に削除しました。開発ツールから再起動した場合も実体パスとハッシュが一致しました。
+- `Test-DriverPowerStartup.ps1`成功。アプリ停止中もVDD無効、起動時の有効化タスク未実行、物理3画面の解像度・位置不変、次回起動用の無効フラグを確認しました。一部PnPノードで`DEVPKEY_Device_ProblemCode`が空になるため、検査はデバイスの`ConfigManagerErrorCode`を使うよう修正しました。この実機値は22でした。
+- `Test-Host.ps1`成功。VDDの起動、`2880x1920@120`でのDesktop Duplication取得、物理画面消灯、新保存先への復旧情報保存、音量抑制を確認しました。強制復帰コマンドから約4.65秒で元の物理3画面へ戻り、VDD停止・音量復元・復旧情報の消去を確認しました。
+
+証跡は`artifacts/storage-fix-build.log`、`storage-fix-windows-launch.json`、`storage-fix-codex-launch.json`、`storage-fix-startup-test.log`、`storage-fix-host-test.json`です。Windows本体の再起動とMoonlight実接続は今回実施していません。
+
 ## 未検証の範囲
 
 - PCを実際に再起動した後の起動と画面復旧。

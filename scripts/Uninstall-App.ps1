@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
-$taskConfigPath = Join-Path $env:APPDATA 'PseudoSleep\config.json'
+$taskConfigPath = Join-Path (Get-PseudoSleepDataDirectory) 'config.json'
 if (Test-Path -LiteralPath $taskConfigPath) {
     $taskConfig = Get-Content -LiteralPath $taskConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($taskConfig.enableRemoteImeBridge) { throw 'Disable the IME bridge with scripts\Set-RemoteImeBridge.ps1 -Mode Disabled before uninstalling.' }

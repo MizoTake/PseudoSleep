@@ -67,10 +67,10 @@ GUI形式のEXEなので、PowerShellでは`| Out-String`を付けて出力と�
 
 | データ | 場所 |
 | --- | --- |
-| 設定 | `%APPDATA%\PseudoSleep\config.json` |
-| 復旧情報・画面バックアップ | `%LOCALAPPDATA%\PseudoSleep\state.json`、`display-backup.json` |
-| 復元待ちの音量と出力先ID | `%LOCALAPPDATA%\PseudoSleep\audio-state.json` |
-| 日付別ログ | `%LOCALAPPDATA%\PseudoSleep\Logs` |
+| 設定 | `%USERPROFILE%\.pseudosleep\config.json` |
+| 復旧情報・画面バックアップ | `%USERPROFILE%\.pseudosleep\state.json`、`display-backup.json` |
+| 復元待ちの音量と出力先ID | `%USERPROFILE%\.pseudosleep\audio-state.json` |
+| 日付別ログ | `%USERPROFILE%\.pseudosleep\Logs` |
 | ビルド成果物・導入時の保存物 | リポジトリ内の`artifacts/`（Git対象外） |
 
 復元が完了しない場合、`state.json`は消さず[復旧・解除手順](docs/setup.md#復旧と連携解除)を確認してください。既定の構成ではMoonlight切断後も自動で復帰します。手動の疑似スリープは明示的な復帰まで維持します。アプリの常用をやめる前にSunshineの開始フックを解除してください。

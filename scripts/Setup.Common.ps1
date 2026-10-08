@@ -1,3 +1,8 @@
+function Get-PseudoSleepDataDirectory {
+    # AppData depends on the launcher's virtualization context, so it cannot hold shared host state.
+    return Join-Path ([Environment]::GetFolderPath('UserProfile')) '.pseudosleep'
+}
+
 function Get-HostAssets {
     @(
         @{ Name='Sunshine-Windows-AMD64-installer.msi'; Url='https://github.com/LizardByte/Sunshine/releases/download/v2026.914.233613/Sunshine-Windows-AMD64-installer.msi'; Hash='1d7fed8beecd5889dc7ff14cf9f42d6d38f37c3066c13c6c2a5f4e91847e0ccf' },

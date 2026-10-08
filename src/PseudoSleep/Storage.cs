@@ -7,8 +7,9 @@ namespace PseudoSleep;
 
 internal static class Storage
 {
-    internal static readonly string ConfigDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PseudoSleep");
-    internal static readonly string DataDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "PseudoSleep");
+    // AppData writes can be redirected by the launcher, so startup and recovery must not use it.
+    internal static readonly string ConfigDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".pseudosleep");
+    internal static readonly string DataDirectory = ConfigDirectory;
     internal static readonly string ConfigPath = Path.Combine(ConfigDirectory, "config.json");
     internal static readonly string StatePath = Path.Combine(DataDirectory, "state.json");
     internal static readonly string AudioStatePath = Path.Combine(DataDirectory, "audio-state.json");
@@ -16,6 +17,7 @@ internal static class Storage
     internal static readonly JsonSerializerOptions Json = new() { WriteIndented = true, PropertyNamingPolicy = JsonNamingPolicy.CamelCase, PropertyNameCaseInsensitive = true, Converters = { new JsonStringEnumConverter() } };
     private static readonly object logLock = new();
     internal static string? LoadedConfigHash { get; private set; }
+    internal static string? LoadedConfigPhysicalPath { get; private set; }
 
     internal static void Write<T>(string path, T value)
     {
@@ -31,15 +33,23 @@ internal static class Storage
 
     internal static AppConfig LoadConfig()
     {
-        if (!File.Exists(ConfigPath)) Write(ConfigPath, new AppConfig());
-        var text = File.ReadAllText(ConfigPath, Encoding.UTF8);
+        if (!File.Exists(ConfigPath))
+        {
+            var previous = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "PseudoSleep", "config.json");
+            if (File.Exists(previous)) throw new InvalidOperationException("旧保存先の設定を選んで移行してください。起動元によって異なる設定が見える場合があるため、自動では選択しません。scripts/Migrate-Storage.ps1 を使用できます。");
+            Write(ConfigPath, new AppConfig());
+        }
+        using var file = new FileStream(ConfigPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+        using var reader = new StreamReader(file, Encoding.UTF8, true);
+        var text = reader.ReadToEnd();
         var config = JsonSerializer.Deserialize<AppConfig>(text, Json) ?? throw new InvalidDataException("Empty config.json");
         config.Validate();
+        LoadedConfigPhysicalPath = FileLocation.Resolve(file.SafeFileHandle);
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(text)));
         if (LoadedConfigHash != hash)
         {
             LoadedConfigHash = hash;
-            Log($"Loaded config: sha256={hash}; path={ConfigPath}; keepVirtual={config.KeepVirtualDisplayInNormalMode}; driver={config.VirtualDisplayDriverInstanceId}; wakeDevices={config.WakeDevices.Count}; executable={Environment.ProcessPath}");
+            Log($"Loaded config: sha256={hash}; path={ConfigPath}; physicalPath={LoadedConfigPhysicalPath}; keepVirtual={config.KeepVirtualDisplayInNormalMode}; driver={config.VirtualDisplayDriverInstanceId}; wakeDevices={config.WakeDevices.Count}; executable={Environment.ProcessPath}");
         }
         return config;
     }

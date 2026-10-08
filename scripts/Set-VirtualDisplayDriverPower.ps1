@@ -8,7 +8,7 @@ $taskResultPath = Join-Path $taskRoot 'artifacts\driver-power-setup-result.json'
 Start-Transcript -Path (Join-Path $taskRoot 'artifacts\driver-power-setup.log') -Append | Out-Null
 trap { Write-Output ($_ | Out-String); Write-Utf8File $taskResultPath (ConvertTo-Json @{success=$false; error=$_.Exception.Message; backup=$taskBackupDirectory}); Stop-Transcript | Out-Null; exit 1 }
 Assert-InteractiveUser
-$taskConfigPath = Join-Path $env:APPDATA 'PseudoSleep\config.json'
+$taskConfigPath = Join-Path (Get-PseudoSleepDataDirectory) 'config.json'
 $taskExe = Join-Path $env:LOCALAPPDATA 'Programs\PseudoSleep\PseudoSleep.exe'
 $taskConfig = [IO.File]::ReadAllText($taskConfigPath) | ConvertFrom-Json
 $taskStatus = & $taskExe status | Out-String | ConvertFrom-Json

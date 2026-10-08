@@ -93,7 +93,7 @@ internal sealed class TrayContext : ApplicationContext
                     PrepareNormalDisplay();
                     break;
                 case "status": return new(true, Status());
-                case "config-status": return new(true, new { loadedHash = Storage.LoadedConfigHash, onDisk = Storage.LoadConfig(), onDiskHash = Storage.LoadedConfigHash, Storage.ConfigPath, process = Environment.ProcessId });
+                case "config-status": return new(true, new { loadedHash = Storage.LoadedConfigHash, onDisk = Storage.LoadConfig(), onDiskHash = Storage.LoadedConfigHash, Storage.ConfigPath, physicalPath = Storage.LoadedConfigPhysicalPath, dataDirectory = Storage.DataDirectory, process = Environment.ProcessId });
                 case "client-mode": case "stream-start":
                     if (command.Name == "stream-start") imeBridge.SetActive(false);
                     config = RuntimeConfiguration.Load();

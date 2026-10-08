@@ -2,6 +2,9 @@ param([switch]$SkipBuild)
 $ErrorActionPreference = 'Stop'
 $taskRoot = Split-Path $PSScriptRoot -Parent
 . (Join-Path $PSScriptRoot 'Setup.Common.ps1')
+$taskSharedConfig = Join-Path (Get-PseudoSleepDataDirectory) 'config.json'
+$taskLegacyConfig = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'PseudoSleep\config.json'
+if (!(Test-Path -LiteralPath $taskSharedConfig) -and (Test-Path -LiteralPath $taskLegacyConfig)) { throw 'Migrate the selected configuration with scripts/Migrate-Storage.ps1 before installing this update.' }
 if (!$SkipBuild) { & (Join-Path $PSScriptRoot 'Build.ps1') -Publish }
 foreach ($taskFile in @('PseudoSleep.exe','PseudoSleep.dll','PseudoSleep.Core.dll','PseudoSleep.deps.json','PseudoSleep.runtimeconfig.json')) { if (!(Test-Path -LiteralPath (Join-Path $taskRoot ('artifacts\publish\' + $taskFile)))) { throw "Missing publish output: $taskFile. Run Build.ps1 -Publish first." } }
 $taskDestination = Join-Path $env:LOCALAPPDATA 'Programs\PseudoSleep'

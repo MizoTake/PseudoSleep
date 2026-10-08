@@ -20,7 +20,8 @@ try {
     & $taskExe exit | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'Exit failed.' }
     Wait-AppExit $taskExe
-    $taskProblemWhileStopped = (Get-PnpDeviceProperty -InstanceId $taskInitial.virtualDisplayDriverInstanceId -KeyName DEVPKEY_Device_ProblemCode).Data
+    # Some nodes omit DEVPKEY_Device_ProblemCode even when the PnP device reports a problem.
+    $taskProblemWhileStopped = [int](Get-PnpDevice -InstanceId $taskInitial.virtualDisplayDriverInstanceId -ErrorAction Stop).ConfigManagerErrorCode
     if ($taskProblemWhileStopped -ne 22) { throw 'Driver is not disabled while the app is stopped.' }
 } finally { Start-Process -FilePath $taskExe -WindowStyle Hidden }
 Start-Sleep -Seconds 3

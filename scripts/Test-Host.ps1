@@ -1,5 +1,6 @@
 param([switch]$CrashRecovery)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'Setup.Common.ps1')
 $taskRoot = Split-Path $PSScriptRoot -Parent
 $taskExe = Join-Path $env:LOCALAPPDATA 'Programs\PseudoSleep\PseudoSleep.exe'
 function Invoke-App([string[]]$Arguments) {
@@ -26,7 +27,7 @@ if ($CrashRecovery) {
     $taskResidents = @(Get-CimInstance Win32_Process -Filter "Name='PseudoSleep.exe'" | Where-Object { $_.ExecutablePath -eq $taskExe -and $_.CommandLine -notmatch '\bguardian\b' })
     if ($taskResidents.Count -ne 1) { throw 'Cannot uniquely identify the resident process; refusing termination.' }
     Stop-Process -Id $taskResidents[0].ProcessId -Force
-    $taskPending = Join-Path $env:LOCALAPPDATA 'PseudoSleep\state.json'
+    $taskPending = Join-Path (Get-PseudoSleepDataDirectory) 'state.json'
     $taskDeadline = (Get-Date).AddSeconds(30)
     while ((Test-Path -LiteralPath $taskPending) -and (Get-Date) -lt $taskDeadline) { Start-Sleep -Milliseconds 250 }
     if (Test-Path -LiteralPath $taskPending) { throw 'Guardian did not complete recovery; journal retained.' }

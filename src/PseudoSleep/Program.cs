@@ -56,6 +56,18 @@ internal static class Program
         object? result;
         switch (args[0].ToLowerInvariant())
         {
+            case "migrate-storage":
+                if (args.Length != 3) throw new ArgumentException("migrate-storage <config-source.json> <old-data-directory>");
+                using (var migrationMutex = new Mutex(false, Ipc.MutexName))
+                {
+                    bool acquired;
+                    try { acquired = migrationMutex.WaitOne(0); } catch (AbandonedMutexException) { acquired = true; }
+                    if (!acquired) throw new InvalidOperationException("旧版を通常状態に戻して終了してから移行してください。");
+                    try { StorageMigration.Import(Path.GetFullPath(args[1]), Path.GetFullPath(args[2]), Storage.ConfigPath); }
+                    finally { migrationMutex.ReleaseMutex(); }
+                }
+                result = new { migrated = true, configPath = Storage.ConfigPath };
+                break;
             case "displays": result = DisplayManager.Enumerate(); break;
             case "devices": result = InputWindow.Enumerate(); break;
             case "audio-status":
